@@ -742,6 +742,105 @@ HTML_CONTENT = '''
             margin-top: 0.5rem;
         }
 
+        /* Community Links Section */
+        .community-section {
+            background: linear-gradient(135deg, rgba(255, 119, 0, 0.05), rgba(255, 153, 51, 0.02));
+            padding: 3rem 2rem;
+            border-radius: 20px;
+            border: 2px solid var(--border-color);
+            margin: 3rem 0;
+            text-align: center;
+        }
+
+        .community-section h2 {
+            color: var(--accent-color);
+            margin-bottom: 2rem;
+            font-size: 2.2rem;
+        }
+
+        .community-links {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+            gap: 2rem;
+            margin-top: 2rem;
+        }
+
+        .community-card {
+            background: rgba(26, 26, 26, 0.8);
+            padding: 2rem;
+            border-radius: 15px;
+            border: 2px solid var(--border-color);
+            transition: all 0.3s ease;
+            text-align: center;
+        }
+
+        .community-card:hover {
+            transform: translateY(-5px);
+            border-color: var(--accent-color);
+            box-shadow: 0 10px 25px rgba(255, 119, 0, 0.2);
+        }
+
+        .community-icon {
+            font-size: 3rem;
+            margin-bottom: 1rem;
+            color: var(--accent-color);
+        }
+
+        .community-card h3 {
+            color: var(--accent-color);
+            margin-bottom: 1rem;
+            font-size: 1.4rem;
+        }
+
+        .community-card p {
+            color: var(--text-secondary);
+            margin-bottom: 1.5rem;
+            line-height: 1.5;
+        }
+
+        .community-btn {
+            display: inline-block;
+            background: linear-gradient(135deg, var(--accent-color), var(--accent-dark));
+            color: var(--primary-bg);
+            padding: 0.8rem 2rem;
+            border-radius: 8px;
+            text-decoration: none;
+            font-weight: bold;
+            transition: all 0.3s ease;
+            border: 2px solid transparent;
+        }
+
+        .community-btn:hover {
+            background: linear-gradient(135deg, var(--accent-light), var(--accent-color));
+            transform: translateY(-2px);
+            box-shadow: 0 5px 15px rgba(255, 119, 0, 0.3);
+        }
+
+        /* Credits Section */
+        .credits-section {
+            background: rgba(26, 26, 26, 0.9);
+            padding: 2rem;
+            border-radius: 15px;
+            border: 1px solid var(--border-color);
+            margin: 2rem 0;
+            text-align: center;
+        }
+
+        .credits-section h3 {
+            color: var(--accent-color);
+            margin-bottom: 1rem;
+        }
+
+        .developer-badge {
+            display: inline-block;
+            background: linear-gradient(135deg, var(--accent-color), var(--accent-dark));
+            color: var(--primary-bg);
+            padding: 0.5rem 1.5rem;
+            border-radius: 25px;
+            font-weight: bold;
+            margin: 0.5rem;
+        }
+
         /* Leaderboard Styles - Enhanced */
         .leaderboard-container {
             background: rgba(26, 26, 26, 0.9);
@@ -1084,6 +1183,10 @@ HTML_CONTENT = '''
             .past-scores-grid {
                 grid-template-columns: 1fr;
             }
+
+            .community-links {
+                grid-template-columns: 1fr;
+            }
         }
 
         @media (max-width: 480px) {
@@ -1118,6 +1221,7 @@ HTML_CONTENT = '''
                 <li><a href="#past-scores" class="nav-link" data-page="past-scores">📊 Past Scores</a></li>
                 <li><a href="#activity" class="nav-link" data-page="activity">📈 Recent Activity</a></li>
                 <li><a href="#system" class="nav-link" data-page="system">⚙️ System</a></li>
+                <li><a href="#community" class="nav-link" data-page="community">🌐 Community</a></li>
             </ul>
         </div>
     </header>
@@ -1148,6 +1252,25 @@ HTML_CONTENT = '''
                     </div>
                 </div>
                 <div class="refresh-indicator" id="last-updated">Last updated: Just now</div>
+            </div>
+
+            <!-- Quick Community Links on Home -->
+            <div class="community-section">
+                <h2>🚀 Join the Community</h2>
+                <div class="community-links">
+                    <div class="community-card">
+                        <div class="community-icon">🏆</div>
+                        <h3>Tournaments</h3>
+                        <p>Compete in official Sea of Thieves TDM tournaments and climb the global rankings</p>
+                        <a href="https://discord.gg/BS33MGD7kC" target="_blank" class="community-btn">Join Tournaments</a>
+                    </div>
+                    <div class="community-card">
+                        <div class="community-icon">🎯</div>
+                        <h3>STAQ Community</h3>
+                        <p>Connect with players, discuss strategies, and find teammates for casual matches</p>
+                        <a href="https://discord.gg/8w483Es4xz" target="_blank" class="community-btn">Join STAQ</a>
+                    </div>
+                </div>
             </div>
         </div>
 
@@ -1255,6 +1378,73 @@ HTML_CONTENT = '''
 
             <div class="refresh-indicator" id="system-updated">Last updated: Just now</div>
         </div>
+
+        <!-- Community Page -->
+        <div id="community" class="page">
+            <div class="hero">
+                <h1>🌐 Community Hub</h1>
+                <p>Connect with the Sea of Thieves TDM Community</p>
+            </div>
+
+            <!-- Community Links Section -->
+            <div class="community-section">
+                <h2>Join Our Communities</h2>
+                <p style="color: var(--text-secondary); margin-bottom: 2rem; font-size: 1.1rem;">
+                    Connect with fellow players, participate in tournaments, and help grow the Sea of Thieves TDM scene!
+                </p>
+                
+                <div class="community-links">
+                    <div class="community-card">
+                        <div class="community-icon">🏆</div>
+                        <h3>SoT TDM Tournaments</h3>
+                        <p>Join the official tournament community for competitive matches, events, rankings, and prize pools. Perfect for players looking to test their skills against the best.</p>
+                        <a href="https://discord.gg/BS33MGD7kC" target="_blank" class="community-btn">Join Tournaments</a>
+                    </div>
+                    
+                    <div class="community-card">
+                        <div class="community-icon">🎯</div>
+                        <h3>STAQ Community</h3>
+                        <p>Connect with the broader Sea of Thieves TDM community for strategy discussions, team formation, casual matches, and general gameplay discussions.</p>
+                        <a href="https://discord.gg/8w483Es4xz" target="_blank" class="community-btn">Join STAQ</a>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Credits Section -->
+            <div class="credits-section">
+                <h3>🎮 Developed By</h3>
+                <div class="developer-badge">Ryan - Lead Developer & System Architect</div>
+                
+                <div style="margin-top: 2rem; color: var(--text-secondary);">
+                    <h4>🌟 Project Features</h4>
+                    <p>• Optimized Cleanup System • Enhanced Leaderboard • 24/7 TDM Channel</p>
+                    <p>• Black/Orange Theme • Mobile Responsive • Real-time Updates</p>
+                </div>
+            </div>
+
+            <!-- Quick Stats -->
+            <div class="system-stats">
+                <h3>Community Impact</h3>
+                <div class="stats-grid">
+                    <div class="stat-card">
+                        <span class="stat-number" id="community-players">0</span>
+                        <span class="stat-label">Total Players</span>
+                    </div>
+                    <div class="stat-card">
+                        <span class="stat-number" id="community-matches">0</span>
+                        <span class="stat-label">Matches Played</span>
+                    </div>
+                    <div class="stat-card">
+                        <span class="stat-number" id="community-kills">0</span>
+                        <span class="stat-label">Total Kills</span>
+                    </div>
+                    <div class="stat-card">
+                        <span class="stat-number" id="community-rooms">0</span>
+                        <span class="stat-label">Active Rooms</span>
+                    </div>
+                </div>
+            </div>
+        </div>
     </div>
 
     <script>
@@ -1285,6 +1475,8 @@ HTML_CONTENT = '''
                 loadRecentActivity();
             } else if (pageId === 'system') {
                 loadSystemStats();
+            } else if (pageId === 'community') {
+                loadCommunityStats();
             }
         }
 
@@ -1348,6 +1540,21 @@ HTML_CONTENT = '''
                 document.getElementById('active-rooms').textContent = '?';
                 document.getElementById('total-players').textContent = '?';
                 document.getElementById('total-matches').textContent = '?';
+            }
+        }
+
+        // Load community stats
+        async function loadCommunityStats() {
+            try {
+                const response = await fetch(`${SERVER_URL}/stats`);
+                const data = await response.json();
+                
+                document.getElementById('community-players').textContent = data.total_players_tracked || '0';
+                document.getElementById('community-matches').textContent = data.total_matches || '0';
+                document.getElementById('community-kills').textContent = data.total_kills || '0';
+                document.getElementById('community-rooms').textContent = data.active_rooms || '0';
+            } catch (error) {
+                console.error('Error loading community stats:', error);
             }
         }
 
@@ -1587,6 +1794,8 @@ HTML_CONTENT = '''
                     loadRecentActivity();
                 } else if (activePage === 'system') {
                     loadSystemStats();
+                } else if (activePage === 'community') {
+                    loadCommunityStats();
                 }
             }, 10000);
         });
