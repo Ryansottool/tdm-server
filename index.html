@@ -1,0 +1,425 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Sea of Thieves TDM - Global Server</title>
+    <style>
+        /* Your existing CSS remains the same */
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: 'Arial', sans-serif;
+            background: linear-gradient(135deg, #121212, #1a1a1a, #2a2a2a);
+            color: #e0e0e0;
+            min-height: 100vh;
+        }
+
+        /* ... (keep all your existing CSS styles) ... */
+
+        /* Add loading states */
+        .loading {
+            opacity: 0.6;
+            pointer-events: none;
+        }
+
+        .error-message {
+            background: rgba(204, 0, 0, 0.2);
+            border: 1px solid #cc0000;
+            padding: 1rem;
+            border-radius: 5px;
+            margin: 1rem 0;
+            text-align: center;
+        }
+    </style>
+</head>
+<body>
+    <!-- Header Navigation -->
+    <header>
+        <div class="nav-container">
+            <div class="logo">SoT TDM</div>
+            <button class="mobile-menu-btn">☰</button>
+            <ul class="nav-menu">
+                <li><a href="#home" class="nav-link active" data-page="home">Home</a></li>
+                <li><a href="#leaderboard" class="nav-link" data-page="leaderboard">Leaderboard</a></li>
+                <li><a href="#past-scores" class="nav-link" data-page="past-scores">Past Scores</a></li>
+            </ul>
+        </div>
+    </header>
+
+    <!-- Main Content -->
+    <div class="main-content">
+        <!-- Home Page -->
+        <div id="home" class="page active">
+            <div class="hero">
+                <h1>Sea of Thieves TDM</h1>
+                <p>Global Team Deathmatch Server - Track player stats and past matches</p>
+                <div class="stats-grid">
+                    <div class="stat-card">
+                        <span class="stat-number" id="online-players">0</span>
+                        <span class="stat-label">Online Players</span>
+                    </div>
+                    <div class="stat-card">
+                        <span class="stat-number" id="active-matches">0</span>
+                        <span class="stat-label">Active Rooms</span>
+                    </div>
+                    <div class="stat-card">
+                        <span class="stat-number" id="total-players">0</span>
+                        <span class="stat-label">Total Players</span>
+                    </div>
+                    <div class="stat-card">
+                        <span class="stat-number" id="total-matches">0</span>
+                        <span class="stat-label">Past Matches</span>
+                    </div>
+                </div>
+                <div class="refresh-indicator" id="last-updated">Last updated: Just now</div>
+            </div>
+
+            <div style="text-align: center; margin-top: 2rem;">
+                <h2>Recent Activity</h2>
+                <div id="recent-activity" style="margin-top: 2rem;">
+                    <div class="room-card">
+                        <div class="room-header">
+                            <div class="room-name">Loading recent activity...</div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Leaderboard Page -->
+        <div id="leaderboard" class="page">
+            <h2>Global Leaderboard</h2>
+            <div class="leaderboard-container">
+                <div class="leaderboard-header">
+                    <div>Rank</div>
+                    <div>Player</div>
+                    <div>Wins</div>
+                    <div>Kills</div>
+                    <div>Deaths</div>
+                    <div>K/D Ratio</div>
+                </div>
+                <div id="leaderboard-content">
+                    <div class="leaderboard-row">
+                        <div class="rank">-</div>
+                        <div class="player-name">Loading leaderboard...</div>
+                        <div>0</div>
+                        <div>0</div>
+                        <div>0</div>
+                        <div>0.00</div>
+                    </div>
+                </div>
+            </div>
+            <div class="refresh-indicator" id="leaderboard-updated">Last updated: Just now</div>
+        </div>
+
+        <!-- Past Scores Page -->
+        <div id="past-scores" class="page">
+            <h2>Past Match Scores</h2>
+            <div class="past-scores-grid" id="past-scores-content">
+                <div class="score-card">
+                    <div class="score-header">
+                        <div>Loading past matches...</div>
+                    </div>
+                </div>
+            </div>
+            <div class="refresh-indicator" id="scores-updated">Last updated: Just now</div>
+        </div>
+    </div>
+
+    <script>
+        // Server configuration - update this to your actual server URL
+        const SERVER_URL = window.location.hostname === 'localhost' 
+            ? 'http://localhost:5000' 
+            : 'https://your-render-app.onrender.com';
+
+        // Page navigation
+        function showPage(pageId) {
+            document.querySelectorAll('.page').forEach(page => {
+                page.classList.remove('active');
+            });
+            
+            document.getElementById(pageId).classList.add('active');
+            
+            document.querySelectorAll('.nav-link').forEach(link => {
+                link.classList.remove('active');
+            });
+            document.querySelector(`[data-page="${pageId}"]`).classList.add('active');
+            
+            if (pageId === 'leaderboard') {
+                loadLeaderboard();
+            } else if (pageId === 'home') {
+                loadHomeStats();
+                loadRecentActivity();
+            } else if (pageId === 'past-scores') {
+                loadPastScores();
+            }
+        }
+
+        // Mobile menu
+        document.querySelector('.mobile-menu-btn').addEventListener('click', function() {
+            document.querySelector('.nav-menu').classList.toggle('active');
+        });
+
+        // Navigation event listeners
+        document.querySelectorAll('.nav-link').forEach(link => {
+            link.addEventListener('click', function(e) {
+                e.preventDefault();
+                const pageId = this.getAttribute('data-page');
+                if (pageId) {
+                    showPage(pageId);
+                }
+                document.querySelector('.nav-menu').classList.remove('active');
+            });
+        });
+
+        // Update timestamp display
+        function updateTimestamp(elementId) {
+            const now = new Date();
+            const timeString = now.toLocaleTimeString();
+            document.getElementById(elementId).textContent = `Last updated: ${timeString}`;
+        }
+
+        // Load leaderboard
+        async function loadLeaderboard() {
+            try {
+                const leaderboardContent = document.getElementById('leaderboard-content');
+                leaderboardContent.classList.add('loading');
+
+                const response = await fetch(`${SERVER_URL}/api`, {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                    },
+                    body: JSON.stringify({
+                        action: 'get_leaderboard',
+                        limit: 50
+                    })
+                });
+
+                const data = await response.json();
+                
+                if (data.status === 'success') {
+                    leaderboardContent.innerHTML = '';
+
+                    if (data.leaderboard.length === 0) {
+                        leaderboardContent.innerHTML = `
+                            <div class="leaderboard-row">
+                                <div class="rank">-</div>
+                                <div class="player-name">No players yet</div>
+                                <div>0</div>
+                                <div>0</div>
+                                <div>0</div>
+                                <div>0.00</div>
+                            </div>
+                        `;
+                        return;
+                    }
+
+                    data.leaderboard.forEach((player, index) => {
+                        const row = document.createElement('div');
+                        row.className = 'leaderboard-row';
+                        row.innerHTML = `
+                            <div class="rank">${index + 1}</div>
+                            <div class="player-name">
+                                <span class="${player.is_online ? 'online-dot' : 'offline-dot'}"></span>
+                                ${player.player_name}
+                            </div>
+                            <div>${player.wins}</div>
+                            <div>${player.kills}</div>
+                            <div>${player.deaths}</div>
+                            <div>${player.kd_ratio.toFixed(2)}</div>
+                        `;
+                        leaderboardContent.appendChild(row);
+                    });
+                    
+                    updateTimestamp('leaderboard-updated');
+                } else {
+                    throw new Error(data.message || 'Failed to load leaderboard');
+                }
+            } catch (error) {
+                console.error('Error loading leaderboard:', error);
+                document.getElementById('leaderboard-content').innerHTML = `
+                    <div class="error-message">
+                        Failed to load leaderboard: ${error.message}
+                    </div>
+                `;
+            } finally {
+                leaderboardContent.classList.remove('loading');
+            }
+        }
+
+        // Load home page statistics
+        async function loadHomeStats() {
+            try {
+                const response = await fetch(SERVER_URL);
+                const data = await response.json();
+                
+                document.getElementById('online-players').textContent = data.online_players || '0';
+                document.getElementById('active-matches').textContent = data.active_rooms || '0';
+                document.getElementById('total-players').textContent = data.total_players_tracked || '0';
+                document.getElementById('total-matches').textContent = data.past_matches || '0';
+                
+                updateTimestamp('last-updated');
+            } catch (error) {
+                console.error('Error loading home stats:', error);
+                document.getElementById('online-players').textContent = '?';
+                document.getElementById('active-matches').textContent = '?';
+                document.getElementById('total-players').textContent = '?';
+                document.getElementById('total-matches').textContent = '?';
+            }
+        }
+
+        // Load recent activity
+        async function loadRecentActivity() {
+            try {
+                const recentActivity = document.getElementById('recent-activity');
+                recentActivity.classList.add('loading');
+
+                const response = await fetch(`${SERVER_URL}/api`, {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                    },
+                    body: JSON.stringify({
+                        action: 'get_recent_activity'
+                    })
+                });
+
+                const data = await response.json();
+                
+                if (data.status === 'success') {
+                    recentActivity.innerHTML = '';
+
+                    if (data.recent_activity.length === 0) {
+                        recentActivity.innerHTML = '<div class="room-card">No recent activity yet.</div>';
+                        return;
+                    }
+
+                    data.recent_activity.forEach(activity => {
+                        const activityCard = document.createElement('div');
+                        activityCard.className = 'room-card';
+                        activityCard.innerHTML = `
+                            <div class="room-header">
+                                <div class="room-name">${activity.type}</div>
+                                <div class="room-code">${activity.time}</div>
+                            </div>
+                            <div class="room-info">
+                                <div>${activity.description}</div>
+                            </div>
+                        `;
+                        recentActivity.appendChild(activityCard);
+                    });
+                } else {
+                    throw new Error(data.message || 'Failed to load recent activity');
+                }
+            } catch (error) {
+                console.error('Error loading recent activity:', error);
+                recentActivity.innerHTML = `
+                    <div class="error-message">
+                        Failed to load recent activity: ${error.message}
+                    </div>
+                `;
+            } finally {
+                recentActivity.classList.remove('loading');
+            }
+        }
+
+        // Load past scores
+        async function loadPastScores() {
+            try {
+                const pastScoresContent = document.getElementById('past-scores-content');
+                pastScoresContent.classList.add('loading');
+
+                const response = await fetch(`${SERVER_URL}/api`, {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                    },
+                    body: JSON.stringify({
+                        action: 'get_past_scores',
+                        limit: 12
+                    })
+                });
+
+                const data = await response.json();
+                
+                if (data.status === 'success') {
+                    pastScoresContent.innerHTML = '';
+
+                    if (data.past_scores.length === 0) {
+                        pastScoresContent.innerHTML = '<div class="score-card">No past matches yet.</div>';
+                        return;
+                    }
+
+                    data.past_scores.forEach(match => {
+                        const scoreCard = document.createElement('div');
+                        scoreCard.className = 'score-card';
+                        scoreCard.innerHTML = `
+                            <div class="score-header">
+                                <div>${match.map}</div>
+                                <div>${match.duration}</div>
+                            </div>
+                            <div class="score-teams">
+                                <div class="team">
+                                    <div class="team-name">${match.team1.name}</div>
+                                    <div class="team-score">${match.team1.score}</div>
+                                </div>
+                                <div class="score-vs">VS</div>
+                                <div class="team">
+                                    <div class="team-name">${match.team2.name}</div>
+                                    <div class="team-score">${match.team2.score}</div>
+                                </div>
+                            </div>
+                            <div class="score-details">
+                                <div>${match.date}</div>
+                                <div>${match.game_mode}</div>
+                            </div>
+                        `;
+                        pastScoresContent.appendChild(scoreCard);
+                    });
+                    
+                    updateTimestamp('scores-updated');
+                } else {
+                    throw new Error(data.message || 'Failed to load past scores');
+                }
+            } catch (error) {
+                console.error('Error loading past scores:', error);
+                pastScoresContent.innerHTML = `
+                    <div class="error-message">
+                        Failed to load past scores: ${error.message}
+                    </div>
+                `;
+            } finally {
+                pastScoresContent.classList.remove('loading');
+            }
+        }
+
+        // Initialize the page
+        document.addEventListener('DOMContentLoaded', function() {
+            loadHomeStats();
+            loadRecentActivity();
+            
+            // Refresh data every 10 seconds
+            setInterval(() => {
+                if (document.getElementById('home').classList.contains('active')) {
+                    loadHomeStats();
+                    loadRecentActivity();
+                }
+                
+                if (document.getElementById('leaderboard').classList.contains('active')) {
+                    loadLeaderboard();
+                }
+                
+                if (document.getElementById('past-scores').classList.contains('active')) {
+                    loadPastScores();
+                }
+            }, 10000);
+        });
+    </script>
+</body>
+</html>
