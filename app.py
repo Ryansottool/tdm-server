@@ -1,4 +1,4 @@
-# tdm_server.py - Simplified TDM Server
+# tdm_server.py - Enhanced with Testing Endpoints
 from flask import Flask, request, jsonify
 from flask_cors import CORS
 import json
@@ -24,6 +24,7 @@ class TDMGameState:
         self.past_matches = []
         self.recent_activity = []
         self.player_sessions = {}
+        self.test_mode = False  # For automated testing
         
     def generate_room_code(self):
         """Generate a unique room code"""
@@ -33,7 +34,13 @@ class TDMGameState:
                 return code
 
     def create_room(self, room_name, game_mode, host_name, password=""):
-        """Create a new TDM room"""
+        """Create a new TDM room with validation"""
+        if not room_name or not host_name:
+            return None, "Room name and host name are required"
+            
+        if len(room_name) > 50:
+            return None, "Room name too long (max 50 characters)"
+            
         room_code = self.generate_room_code()
         
         self.rooms[room_code] = {
@@ -47,7 +54,7 @@ class TDMGameState:
             'teams': {
                 "team1": [],
                 "team2": [], 
-                "spectators": []
+                "spectators": [host_name]  # Host starts as spectator
             },
             'scores': {
                 "team1": 0, 
@@ -57,23 +64,26 @@ class TDMGameState:
             'kill_feed': [],
             'created_time': time.time(),
             'last_activity': time.time(),
-            'players': [],
-            'player_last_active': {}
+            'players': [host_name],
+            'player_last_active': {host_name: time.time()}
         }
         
         self.add_recent_activity('Room Created', f'{room_name} ({room_code})', room_code, host_name)
         logger.info(f"Room created: {room_code} by {host_name}")
         
-        return room_code
+        return room_code, "Room created successfully"
 
     def join_room(self, room_code, player_name, password=""):
-        """Join a player to a room"""
+        """Join a player to a room with validation"""
         room_code = room_code.upper()
         if room_code not in self.rooms:
             return False, "Room not found"
             
         room = self.rooms[room_code]
         
+        if not player_name:
+            return False, "Player name is required"
+            
         # Check password
         if room['has_password'] and room['password'] != password:
             return False, "Incorrect password"
@@ -81,6 +91,10 @@ class TDMGameState:
         # Check if player already in room
         if player_name in room['players']:
             return False, "Player already in room"
+            
+        # Check if room is full
+        if len(room['players']) >= room['max_players']:
+            return False, "Room is full"
             
         # Add player to spectators initially
         room['players'].append(player_name)
@@ -112,21 +126,31 @@ class TDMGameState:
                 self.add_recent_activity('Player Left', f'{player_name} left the room', room_code, player_name)
                 logger.info(f"Player {player_name} left room {room_code}")
                 
-                # Delete room if empty
-                if not room['players']:
+                # Delete room if empty (and not in test mode)
+                if not room['players'] and not self.test_mode:
                     del self.rooms[room_code]
                     logger.info(f"Room {room_code} deleted (empty)")
                 
-                return True
-        return False
+                return True, "Left room successfully"
+        return False, "Room not found or player not in room"
 
     def change_team(self, room_code, player_name, new_team):
-        """Change a player's team"""
+        """Change a player's team with validation"""
         room_code = room_code.upper()
         if room_code not in self.rooms:
-            return False
+            return False, "Room not found"
             
         room = self.rooms[room_code]
+        
+        if player_name not in room['players']:
+            return False, "Player not in room"
+            
+        if new_team not in ['team1', 'team2', 'spectators']:
+            return False, "Invalid team"
+            
+        # Check if team is full (max 2 players per team for 2v2)
+        if new_team in ['team1', 'team2'] and len(room['teams'][new_team]) >= 2:
+            return False, f"{new_team} is full"
         
         # Remove player from current team
         for team in ['team1', 'team2', 'spectators']:
@@ -139,15 +163,27 @@ class TDMGameState:
         self.update_player_activity(player_name, room_code)
         
         self.add_recent_activity('Team Change', f'{player_name} joined {new_team}', room_code, player_name)
-        return True
+        return True, f"Joined {new_team} successfully"
 
-    def start_game(self, room_code):
-        """Start the match in a room"""
+    def start_game(self, room_code, player_name):
+        """Start the match in a room with validation"""
         room_code = room_code.upper()
         if room_code not in self.rooms:
-            return False
+            return False, "Room not found"
             
         room = self.rooms[room_code]
+        
+        # Only host can start the game
+        if player_name != room['host_name']:
+            return False, "Only the host can start the game"
+            
+        # Check if teams have players
+        if len(room['teams']['team1']) == 0 or len(room['teams']['team2']) == 0:
+            return False, "Both teams need at least one player to start"
+            
+        if room['game_active']:
+            return False, "Game is already active"
+            
         room['game_active'] = True
         room['scores'] = {"team1": 0, "team2": 0}
         room['kill_feed'] = []
@@ -155,18 +191,21 @@ class TDMGameState:
         
         self.add_recent_activity('Game Started', f'Game started in {room["room_name"]}', room_code)
         logger.info(f"Game started in room {room_code}")
-        return True
+        return True, "Game started successfully"
 
     def report_kill(self, room_code, killer, victim):
-        """Handle kill reporting and update scores"""
+        """Handle kill reporting and update scores with validation"""
         room_code = room_code.upper()
         if room_code not in self.rooms:
-            return False
+            return False, "Room not found"
             
         room = self.rooms[room_code]
         
         if not room['game_active']:
-            return False
+            return False, "Game is not active"
+            
+        if killer not in room['players'] or victim not in room['players']:
+            return False, "Invalid players"
             
         # Add to kill feed
         kill_entry = {
@@ -179,16 +218,17 @@ class TDMGameState:
         # Update scores based on killer's team
         killer_team = None
         for team, players in room['teams'].items():
-            if killer in players:
+            if killer in players and team in ['team1', 'team2']:
                 killer_team = team
                 break
         
-        if killer_team and killer_team in ['team1', 'team2']:
+        if killer_team:
             room['scores'][killer_team] += 1
             
-            # Check for match end (first to 20 kills)
-            if room['scores'][killer_team] >= 20:
-                self.end_match(room)
+            # Check for match end (first to 5 kills for testing)
+            win_score = 5 if self.test_mode else 20
+            if room['scores'][killer_team] >= win_score:
+                self.end_match(room, killer_team)
         
         room['last_activity'] = time.time()
         self.update_player_activity(killer, room_code)
@@ -197,9 +237,9 @@ class TDMGameState:
         
         self.add_recent_activity('Kill', f'{killer} defeated {victim}', room_code)
         logger.info(f"Kill registered: {killer} -> {victim} in {room_code}")
-        return True
+        return True, "Kill registered successfully"
 
-    def end_match(self, room):
+    def end_match(self, room, winning_team):
         """End the match and record results"""
         room['game_active'] = False
         
@@ -212,6 +252,7 @@ class TDMGameState:
             'team2_score': room['scores']['team2'],
             'team1_players': room['teams']['team1'].copy(),
             'team2_players': room['teams']['team2'].copy(),
+            'winner': winning_team,
             'timestamp': time.time(),
             'kill_count': len(room['kill_feed']),
             'total_players': len(room['players'])
@@ -219,7 +260,7 @@ class TDMGameState:
         
         self.past_matches.append(match_data)
         self.add_recent_activity('Match Completed', 
-                               f'{room["room_name"]} - Team1: {room["scores"]["team1"]} vs Team2: {room["scores"]["team2"]}',
+                               f'{room["room_name"]} - {winning_team} wins {room["scores"][winning_team]}-{room["scores"]["team2" if winning_team == "team1" else "team1"]}',
                                room['room_code'])
         
         # Keep only last 50 matches
@@ -238,6 +279,7 @@ class TDMGameState:
                         'player_name': killer,
                         'kills': 0,
                         'deaths': 0,
+                        'wins': 0,
                         'games_played': 0
                     }
                 self.leaderboard[killer]['kills'] += 1
@@ -249,6 +291,7 @@ class TDMGameState:
                         'player_name': victim,
                         'kills': 0,
                         'deaths': 0,
+                        'wins': 0,
                         'games_played': 0
                     }
                 self.leaderboard[victim]['deaths'] += 1
@@ -270,7 +313,8 @@ class TDMGameState:
             'description': description,
             'timestamp': time.time(),
             'room_code': room_code,
-            'player_name': player_name
+            'player_name': player_name,
+            'formatted_time': datetime.now().strftime('%H:%M:%S')
         }
         self.recent_activity.append(activity)
         
@@ -280,6 +324,9 @@ class TDMGameState:
 
     def cleanup_inactive_rooms(self):
         """Clean up inactive rooms"""
+        if self.test_mode:
+            return
+            
         current_time = time.time()
         inactive_rooms = []
         
@@ -315,6 +362,16 @@ class TDMGameState:
         
         return public_rooms
 
+    def get_system_stats(self):
+        """Get system statistics"""
+        return {
+            'total_rooms': len(self.rooms),
+            'total_players': len(self.player_sessions),
+            'total_matches': len(self.past_matches),
+            'total_kills': sum(player['kills'] for player in self.leaderboard.values()),
+            'online_players': sum(1 for last_seen in self.player_sessions.values() if time.time() - last_seen < 300)
+        }
+
 # Initialize global game state
 game_state = TDMGameState()
 
@@ -331,7 +388,7 @@ def cleanup_worker():
 cleanup_thread = threading.Thread(target=cleanup_worker, daemon=True)
 cleanup_thread.start()
 
-logger.info("TDM Server started with room management and kill handling")
+logger.info("TDM Server started with enhanced validation and testing support")
 
 # API Routes
 @app.route('/api', methods=['POST', 'OPTIONS'])
@@ -352,13 +409,19 @@ def api_handler():
             host_name = data.get('host_name', 'Unknown')
             password = data.get('password', '')
             
-            room_code = game_state.create_room(room_name, game_mode, host_name, password)
-            return jsonify({
-                'status': 'success',
-                'room_code': room_code,
-                'message': f'Room {room_code} created successfully'
-            })
-            
+            room_code, message = game_state.create_room(room_name, game_mode, host_name, password)
+            if room_code:
+                return jsonify({
+                    'status': 'success',
+                    'room_code': room_code,
+                    'message': message
+                })
+            else:
+                return jsonify({
+                    'status': 'error',
+                    'message': message
+                })
+                
         elif action == 'join_room':
             room_code = data.get('room_code', '')
             player_name = data.get('player_name', 'Unknown')
@@ -380,38 +443,43 @@ def api_handler():
             room_code = data.get('room_code', '')
             player_name = data.get('player_name', '')
             
-            if game_state.leave_room(room_code, player_name):
-                return jsonify({'status': 'success', 'message': 'Left room'})
+            success, message = game_state.leave_room(room_code, player_name)
+            if success:
+                return jsonify({'status': 'success', 'message': message})
             else:
-                return jsonify({'status': 'error', 'message': 'Failed to leave room'})
+                return jsonify({'status': 'error', 'message': message})
                 
         elif action == 'change_team':
             room_code = data.get('room_code', '')
             player_name = data.get('player_name', '')
             new_team = data.get('new_team', 'spectators')
             
-            if game_state.change_team(room_code, player_name, new_team):
-                return jsonify({'status': 'success', 'message': f'Changed to {new_team}'})
+            success, message = game_state.change_team(room_code, player_name, new_team)
+            if success:
+                return jsonify({'status': 'success', 'message': message})
             else:
-                return jsonify({'status': 'error', 'message': 'Failed to change team'})
+                return jsonify({'status': 'error', 'message': message})
                 
         elif action == 'start_game':
             room_code = data.get('room_code', '')
+            player_name = data.get('player_name', '')
             
-            if game_state.start_game(room_code):
-                return jsonify({'status': 'success', 'message': 'Game started'})
+            success, message = game_state.start_game(room_code, player_name)
+            if success:
+                return jsonify({'status': 'success', 'message': message})
             else:
-                return jsonify({'status': 'error', 'message': 'Failed to start game'})
+                return jsonify({'status': 'error', 'message': message})
                 
         elif action == 'report_kill':
             room_code = data.get('room_code', '')
             killer = data.get('killer', '')
             victim = data.get('victim', '')
             
-            if game_state.report_kill(room_code, killer, victim):
-                return jsonify({'status': 'success', 'message': 'Kill registered'})
+            success, message = game_state.report_kill(room_code, killer, victim)
+            if success:
+                return jsonify({'status': 'success', 'message': message})
             else:
-                return jsonify({'status': 'error', 'message': 'Failed to register kill'})
+                return jsonify({'status': 'error', 'message': message})
                 
         elif action == 'get_room_state':
             room_code = data.get('room_code', '')
@@ -442,13 +510,14 @@ def api_handler():
                     'player_name': player_name,
                     'kills': stats['kills'],
                     'deaths': stats['deaths'],
-                    'kd_ratio': kd_ratio
+                    'wins': stats.get('wins', 0),
+                    'kd_ratio': round(kd_ratio, 2)
                 })
             
             leaderboard_data.sort(key=lambda x: x['kills'], reverse=True)
             return jsonify({
                 'status': 'success',
-                'leaderboard': leaderboard_data[:50]  # Top 50
+                'leaderboard': leaderboard_data[:50]
             })
             
         elif action == 'get_past_scores':
@@ -465,6 +534,13 @@ def api_handler():
                 'recent_activity': game_state.recent_activity[-20:]
             })
             
+        elif action == 'get_system_stats':
+            stats = game_state.get_system_stats()
+            return jsonify({
+                'status': 'success',
+                'stats': stats
+            })
+            
         else:
             return jsonify({'status': 'error', 'message': 'Invalid action'})
 
@@ -472,21 +548,79 @@ def api_handler():
         logger.error(f"API error: {e}")
         return jsonify({'status': 'error', 'message': str(e)})
 
+# Testing endpoints
+@app.route('/test/health', methods=['GET'])
+def health_check():
+    return jsonify({
+        'status': 'healthy',
+        'timestamp': time.time(),
+        'rooms_count': len(game_state.rooms),
+        'players_count': len(game_state.player_sessions)
+    })
+
+@app.route('/test/reset', methods=['POST'])
+def reset_test_data():
+    """Reset all data for testing"""
+    game_state.rooms.clear()
+    game_state.leaderboard.clear()
+    game_state.past_matches.clear()
+    game_state.recent_activity.clear()
+    game_state.player_sessions.clear()
+    game_state.test_mode = True
+    
+    logger.info("Test data reset")
+    return jsonify({'status': 'success', 'message': 'Test data reset'})
+
+@app.route('/test/create_sample_data', methods=['POST'])
+def create_sample_data():
+    """Create sample data for testing"""
+    # Create sample rooms
+    room1, _ = game_state.create_room("Test Room 1", "2v2", "TestHost1")
+    room2, _ = game_state.create_room("Test Room 2", "2v2", "TestHost2", "password123")
+    
+    # Add sample players
+    game_state.join_room(room1, "Player1")
+    game_state.join_room(room1, "Player2")
+    game_state.join_room(room1, "Player3")
+    
+    game_state.join_room(room2, "Player4")
+    
+    # Change teams
+    game_state.change_team(room1, "Player1", "team1")
+    game_state.change_team(room1, "Player2", "team2")
+    game_state.change_team(room1, "Player3", "spectators")
+    
+    # Start a game and report kills
+    game_state.start_game(room1, "TestHost1")
+    game_state.report_kill(room1, "Player1", "Player2")
+    game_state.report_kill(room1, "Player2", "Player1")
+    game_state.report_kill(room1, "Player1", "Player2")
+    
+    return jsonify({
+        'status': 'success',
+        'message': 'Sample data created',
+        'rooms_created': [room1, room2]
+    })
+
 @app.route('/')
 def index():
     return jsonify({
         'message': 'TDM Server is running',
         'endpoints': {
             '/api': 'POST - Main API endpoint',
+            '/test/health': 'GET - Health check',
+            '/test/reset': 'POST - Reset test data',
+            '/test/create_sample_data': 'POST - Create sample data',
             'actions': [
                 'create_room', 'join_room', 'leave_room', 'change_team',
                 'start_game', 'report_kill', 'get_room_state', 'list_rooms',
-                'get_leaderboard', 'get_past_scores', 'get_recent_activity'
+                'get_leaderboard', 'get_past_scores', 'get_recent_activity', 'get_system_stats'
             ]
         }
     })
 
 if __name__ == '__main__':
-    logger.info("🎮 Starting TDM Server - Room Management & Kill Handling")
+    logger.info("🎮 Starting Enhanced TDM Server with Testing Support")
     logger.info("🌐 Server available at http://localhost:5000")
+    logger.info("🧪 Testing endpoints available at /test/*")
     app.run(host='0.0.0.0', port=5000, debug=False, threaded=True)
