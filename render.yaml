@@ -1,13 +1,27 @@
 services:
+  # Render Server
   - type: web
-    name: sea-of-thieves-tdm
+    name: sot-tdm-server
     env: python
     buildCommand: pip install -r requirements.txt
-    startCommand: python app.py
+    startCommand: python server.py
     envVars:
-      - key: DISCORD_BOT_TOKEN
-        sync: false
-      - key: DISCORD_CHANNEL_ID
-        sync: false
       - key: PORT
         value: 5000
+      - key: PYTHON_VERSION
+        value: 3.9.0
+    
+  # Discord Bot (Worker)
+  - type: worker
+    name: sot-tdm-bot
+    env: python
+    buildCommand: pip install -r requirements.txt
+    startCommand: python discord_bot.py
+    envVars:
+      - key: DISCORD_TOKEN
+        sync: false
+      - key: SERVER_URL
+        fromService:
+          name: sot-tdm-server
+          type: web
+          property: url
