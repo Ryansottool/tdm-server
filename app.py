@@ -976,6 +976,25 @@ def home():
                 position: relative;
             }
             
+            .glow {
+                position: fixed;
+                width: 300px;
+                height: 300px;
+                border-radius: 50%;
+                background: radial-gradient(circle, rgba(255, 0, 255, 0.15) 0%, transparent 70%);
+                filter: blur(60px);
+                animation: float 20s infinite linear;
+                z-index: -1;
+            }
+            
+            @keyframes float {
+                0% { transform: translate(0, 0) rotate(0deg); }
+                25% { transform: translate(100px, 100px) rotate(90deg); }
+                50% { transform: translate(0, 200px) rotate(180deg); }
+                75% { transform: translate(-100px, 100px) rotate(270deg); }
+                100% { transform: translate(0, 0) rotate(360deg); }
+            }
+            
             .container {
                 max-width: 500px;
                 margin: 0 auto;
@@ -1237,29 +1256,14 @@ def home():
                     font-size: 16px;
                 }
             }
-            
-            @media (max-width: 768px) {
-                .container {
-                    padding: 20px;
-                }
-                .logo {
-                    font-size: 3.5rem;
-                }
-                .login-box {
-                    padding: 30px 20px;
-                }
-                .key-input {
-                    padding: 18px;
-                    font-size: 16px;
-                }
-                .login-btn {
-                    padding: 18px;
-                    font-size: 16px;
-                }
-            }
         </style>
     </head>
     <body>
+        <!-- Floating glow effects -->
+        <div class="glow" style="top: 10%; left: 10%; animation-delay: 0s; background: radial-gradient(circle, rgba(157, 0, 255, 0.15) 0%, transparent 70%);"></div>
+        <div class="glow" style="top: 60%; right: 10%; animation-delay: -5s; background: radial-gradient(circle, rgba(0, 212, 255, 0.12) 0%, transparent 70%);"></div>
+        <div class="glow" style="bottom: 20%; left: 20%; animation-delay: -10s; background: radial-gradient(circle, rgba(255, 0, 255, 0.12) 0%, transparent 70%);"></div>
+        
         <div class="container">
             <div class="logo">GOBLIN</div>
             <div class="subtitle">Enter your API key to access the dashboard</div>
@@ -1505,6 +1509,25 @@ def dashboard():
             color: #fff;
             min-height: 100vh;
             overflow-x: hidden;
+            position: relative;
+        }}
+        
+        .glow {{
+            position: fixed;
+            width: 400px;
+            height: 400px;
+            border-radius: 50%;
+            background: radial-gradient(circle, rgba(255, 0, 255, 0.12) 0%, transparent 70%);
+            filter: blur(80px);
+            animation: float 25s infinite linear;
+            z-index: -1;
+        }}
+        
+        @keyframes float {{
+            0% {{ transform: translate(0, 0) rotate(0deg); }}
+            33% {{ transform: translate(200px, 200px) rotate(120deg); }}
+            66% {{ transform: translate(-200px, 100px) rotate(240deg); }}
+            100% {{ transform: translate(0, 0) rotate(360deg); }}
         }}
         
         .header {{
@@ -1995,6 +2018,11 @@ def dashboard():
     </style>
 </head>
 <body>
+    <!-- Floating glow effects -->
+    <div class="glow" style="top: 10%; left: 5%; animation-delay: 0s; background: radial-gradient(circle, rgba(157, 0, 255, 0.12) 0%, transparent 70%);"></div>
+    <div class="glow" style="top: 60%; right: 5%; animation-delay: -8s; background: radial-gradient(circle, rgba(0, 212, 255, 0.1) 0%, transparent 70%);"></div>
+    <div class="glow" style="bottom: 10%; left: 30%; animation-delay: -16s; background: radial-gradient(circle, rgba(255, 0, 255, 0.1) 0%, transparent 70%);"></div>
+    
     <div class="header">
         <div class="logo">GOBLIN PROFILE</div>
         <div class="user-info">
@@ -2275,7 +2303,7 @@ if __name__ == '__main__':
         print("❌ Discord token not set or invalid")
     
     print(f"\n🌐 Web Interface: http://localhost:{port}")
-    print(f"🎨 Design: Animated dark theme with particles")
+    print(f"🎨 Design: Minimal dark theme with glow effects")
     
     print(f"\n🎮 Discord Commands:")
     print(f"   /ping - Check bot status (with toxic responses)")
@@ -2300,6 +2328,7 @@ if __name__ == '__main__':
     
     print(f"\n🎨 UI Features:")
     print(f"   • Dark theme with pink/purple accents")
+    print(f"   • Floating glow effects in background")
     print(f"   • Profile view with stats")
     print(f"   • Interactive elements with hover effects")
     
