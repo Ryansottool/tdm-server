@@ -57,12 +57,12 @@ TOXIC_PING_RESPONSES = [
     "Bot's online, you're still bad",
     "Pong, get better at pinging",
     "I exist, unlike your skill",
-    "Here, now stop pinging me",
+    "now stop pinging me",
     "Online, but not happy about it",
-    "Yes, I'm alive. Happy?",
+    "I'm alive. Happy?",
     "Present, against my will",
-    "Up and running, unlike you",
-    "Bot status: Annoyed"
+    "Up and running, unlike you fattso",
+    "Bot status: Fuck you"
 ]
 
 # Normal ping responses
