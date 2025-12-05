@@ -1,4 +1,4 @@
-# app.py - ENHANCED BOT WITH TICKET ROOMS
+# app.py - PINK/PURPLE BOT WITH TICKET SYSTEM
 import os
 import json
 import sqlite3
@@ -12,7 +12,7 @@ from flask_cors import CORS
 from datetime import datetime
 import logging
 import secrets
-import re
+import asyncio
 
 app = Flask(__name__)
 app.secret_key = os.environ.get('SECRET_KEY', secrets.token_hex(32))
@@ -35,9 +35,6 @@ logger = logging.getLogger(__name__)
 bot_active = False
 bot_info = {}
 
-# Cache for admin roles
-admin_role_cache = {}
-
 # Ping responses
 PING_RESPONSES = [
     "I'm here",
@@ -50,6 +47,15 @@ PING_RESPONSES = [
     "Present",
     "Awake",
     "Active"
+]
+
+# Ticket categories for options
+TICKET_CATEGORIES = [
+    {"name": "Bug Report", "emoji": "🐛", "color": 0xe74c3c},
+    {"name": "Feature Request", "emoji": "✨", "color": 0x3498db},
+    {"name": "Account Issue", "emoji": "👤", "color": 0x2ecc71},
+    {"name": "Technical Support", "emoji": "🔧", "color": 0xf39c12},
+    {"name": "Other", "emoji": "❓", "color": 0x9b59b6}
 ]
 
 # =============================================================================
@@ -74,6 +80,8 @@ def discord_api_request(endpoint, method="GET", data=None):
             response = requests.put(url, headers=headers, json=data, timeout=10)
         elif method == "DELETE":
             response = requests.delete(url, headers=headers, timeout=10)
+        elif method == "PATCH":
+            response = requests.patch(url, headers=headers, json=data, timeout=10)
         else:
             return None
             
@@ -98,10 +106,6 @@ def get_guild_info(guild_id):
     """Get guild information"""
     return discord_api_request(f"/guilds/{guild_id}")
 
-def get_guild_channels(guild_id):
-    """Get all channels in guild"""
-    return discord_api_request(f"/guilds/{guild_id}/channels")
-
 def create_guild_channel(guild_id, channel_data):
     """Create a channel in guild"""
     return discord_api_request(f"/guilds/{guild_id}/channels", "POST", channel_data)
@@ -117,24 +121,17 @@ def create_channel_invite(channel_id, max_age=0):
 
 def is_user_admin_in_guild(guild_id, user_id):
     """Check if user has admin/manage permissions in guild"""
-    cache_key = f"{guild_id}_{user_id}"
-    if cache_key in admin_role_cache:
-        return admin_role_cache[cache_key]
-    
     try:
         member = get_guild_member(guild_id, user_id)
         if not member:
-            admin_role_cache[cache_key] = False
             return False
         
         guild = get_guild_info(guild_id)
         if guild and guild.get('owner_id') == user_id:
-            admin_role_cache[cache_key] = True
             return True
         
         roles = get_guild_roles(guild_id)
         if not roles:
-            admin_role_cache[cache_key] = False
             return False
         
         member_roles = member.get('roles', [])
@@ -143,39 +140,38 @@ def is_user_admin_in_guild(guild_id, user_id):
                 if role['id'] == role_id:
                     permissions = int(role.get('permissions', 0))
                     if permissions & 0x8 or permissions & 0x20 or permissions & 0x10000000:
-                        admin_role_cache[cache_key] = True
                         return True
         
-        admin_role_cache[cache_key] = False
         return False
         
     except Exception as e:
         logger.error(f"Error checking admin status: {e}")
-        admin_role_cache[cache_key] = False
         return False
 
 # =============================================================================
 # TICKET SYSTEM
 # =============================================================================
 
-async def create_ticket_channel(guild_id, user_id, user_name, ticket_id, issue):
-    """Create private ticket channel"""
+def create_ticket_channel(guild_id, user_id, user_name, ticket_id, issue, category):
+    """Create private ticket channel with shorter name"""
     try:
         # Get guild info
         guild = get_guild_info(guild_id)
         if not guild:
             return None
         
-        guild_name = guild.get('name', 'Server')
+        # Create shorter channel name (ticket-1234)
+        short_id = ticket_id.split('-')[1][:4]  # Get first 4 chars of timestamp
+        channel_name = f"ticket-{short_id}"
         
-        # Create channel name
-        channel_name = f"ticket-{ticket_id.lower()}"
+        # Find category for ticket type
+        category_info = next((c for c in TICKET_CATEGORIES if c["name"] == category), TICKET_CATEGORIES[-1])
         
         # Create channel data
         channel_data = {
             "name": channel_name,
             "type": 0,  # Text channel
-            "topic": f"Ticket #{ticket_id} - {issue[:50]}...",
+            "topic": f"{category_info['emoji']} {issue[:50]}...",
             "parent_id": None,
             "permission_overwrites": [
                 {
@@ -198,7 +194,7 @@ async def create_ticket_channel(guild_id, user_id, user_name, ticket_id, issue):
             channel_data["permission_overwrites"].append({
                 "id": MOD_ROLE_ID,
                 "type": 0,
-                "allow": "3072",
+                "allow": "3072",  # VIEW_CHANNEL + SEND_MESSAGES
                 "deny": "0"
             })
         
@@ -207,21 +203,46 @@ async def create_ticket_channel(guild_id, user_id, user_name, ticket_id, issue):
         if not channel:
             return None
         
-        # Send welcome message
+        # Create embed with close button
+        embed = {
+            "title": f"{category_info['emoji']} Ticket #{ticket_id}",
+            "description": issue,
+            "color": category_info['color'],
+            "fields": [
+                {"name": "👤 Created By", "value": f"<@{user_id}> ({user_name})", "inline": True},
+                {"name": "📅 Created", "value": f"<t:{int(time.time())}:R>", "inline": True},
+                {"name": "🏷️ Category", "value": category, "inline": True},
+                {"name": "🔒 Channel", "value": f"<#{channel['id']}>", "inline": True}
+            ],
+            "footer": {"text": "Click the button below to close this ticket"},
+            "timestamp": datetime.utcnow().isoformat()
+        }
+        
+        # Create close button component
+        components = {
+            "type": 1,
+            "components": [
+                {
+                    "type": 2,
+                    "style": 4,  # Danger style (red)
+                    "label": "Close Ticket",
+                    "emoji": {"name": "🔒"},
+                    "custom_id": f"close_ticket_{ticket_id}"
+                },
+                {
+                    "type": 2,
+                    "style": 2,  # Secondary style (grey)
+                    "label": "Add User",
+                    "emoji": {"name": "👥"},
+                    "custom_id": f"add_user_{ticket_id}"
+                }
+            ]
+        }
+        
         welcome_message = {
-            "content": f"<@{user_id}>",
-            "embeds": [{
-                "title": f"🎫 Ticket #{ticket_id}",
-                "description": issue,
-                "color": 0x3498db,
-                "fields": [
-                    {"name": "👤 Created By", "value": f"<@{user_id}> ({user_name})", "inline": True},
-                    {"name": "📅 Created", "value": datetime.utcnow().strftime("%Y-%m-%d %H:%M UTC"), "inline": True},
-                    {"name": "🔒 Channel", "value": f"<#{channel['id']}>", "inline": True}
-                ],
-                "footer": {"text": f"Use /close to close this ticket"},
-                "timestamp": datetime.utcnow().isoformat()
-            }]
+            "content": f"<@{user_id}> Welcome to your ticket!",
+            "embeds": [embed],
+            "components": [components]
         }
         
         message_response = discord_api_request(f"/channels/{channel['id']}/messages", "POST", welcome_message)
@@ -232,15 +253,25 @@ async def create_ticket_channel(guild_id, user_id, user_name, ticket_id, issue):
         logger.error(f"Error creating ticket channel: {e}")
         return None
 
-def close_ticket_channel(channel_id, resolved_by):
-    """Close ticket channel"""
+def close_ticket_channel(channel_id, ticket_id, closed_by):
+    """Close ticket channel and update database"""
     try:
-        # Archive/delete channel or rename it
+        # Update database
+        conn = get_db_connection()
+        conn.execute('''
+            UPDATE tickets 
+            SET status = "closed", resolved_at = CURRENT_TIMESTAMP, assigned_to = ?
+            WHERE ticket_id = ?
+        ''', (closed_by, ticket_id))
+        conn.commit()
+        conn.close()
+        
+        # Rename channel to archived
         channel_data = {
-            "name": f"closed-{int(time.time())}",
+            "name": f"closed-{int(time.time()) % 10000:04d}",
             "permission_overwrites": [
                 {
-                    "id": resolved_by,
+                    "id": closed_by,
                     "type": 1,
                     "allow": "0",
                     "deny": "1024"
@@ -248,10 +279,27 @@ def close_ticket_channel(channel_id, resolved_by):
             ]
         }
         
-        return discord_api_request(f"/channels/{channel_id}", "PATCH", channel_data)
+        result = discord_api_request(f"/channels/{channel_id}", "PATCH", channel_data)
+        
+        # Send closure message
+        close_message = {
+            "content": f"Ticket closed by <@{closed_by}>",
+            "embeds": [{
+                "title": "🔒 Ticket Closed",
+                "description": f"This ticket has been closed by <@{closed_by}>",
+                "color": 0x95a5a6,
+                "timestamp": datetime.utcnow().isoformat()
+            }],
+            "components": []  # Remove buttons
+        }
+        
+        discord_api_request(f"/channels/{channel_id}/messages", "POST", close_message)
+        
+        return True
+        
     except Exception as e:
         logger.error(f"Error closing ticket channel: {e}")
-        return None
+        return False
 
 # =============================================================================
 # SECURE KEY GENERATION
@@ -260,7 +308,7 @@ def close_ticket_channel(channel_id, resolved_by):
 def generate_secure_key():
     """Generate strong API key"""
     alphabet = string.ascii_letters + string.digits + '!@#$%^&*'
-    key = 'BOT-' + ''.join(secrets.choice(alphabet) for _ in range(28))
+    key = 'GOB-' + ''.join(secrets.choice(alphabet) for _ in range(16))
     return key
 
 # =============================================================================
@@ -294,33 +342,7 @@ def init_db():
             )
         ''')
         
-        # Webhooks table
-        cursor.execute('''
-            CREATE TABLE IF NOT EXISTS webhooks (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                webhook_url TEXT UNIQUE,
-                server_id TEXT,
-                webhook_name TEXT,
-                is_active BOOLEAN DEFAULT 1,
-                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-            )
-        ''')
-        
-        # Updates table
-        cursor.execute('''
-            CREATE TABLE IF NOT EXISTS updates (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                version TEXT UNIQUE,
-                download_url TEXT,
-                changelog TEXT,
-                file_size TEXT,
-                is_critical BOOLEAN DEFAULT 0,
-                uploaded_by TEXT,
-                uploaded_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-            )
-        ''')
-        
-        # Tickets table with channel ID
+        # Tickets table with category
         cursor.execute('''
             CREATE TABLE IF NOT EXISTS tickets (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -328,6 +350,7 @@ def init_db():
                 discord_id TEXT,
                 discord_name TEXT,
                 issue TEXT,
+                category TEXT DEFAULT 'Other',
                 channel_id TEXT,
                 status TEXT DEFAULT 'open',
                 assigned_to TEXT,
@@ -335,17 +358,6 @@ def init_db():
                 resolved_at TIMESTAMP
             )
         ''')
-        
-        # Add default update
-        try:
-            cursor.execute('''
-                INSERT OR IGNORE INTO updates 
-                (version, download_url, changelog, file_size, uploaded_by)
-                VALUES 
-                ('1.0.0', 'https://example.com/client-v1.zip', 'Initial release', '15.2 MB', 'system')
-            ''')
-        except:
-            pass
         
         conn.commit()
         conn.close()
@@ -363,7 +375,7 @@ def get_db_connection():
 
 def validate_api_key(api_key):
     """Validate API key"""
-    if not api_key or not api_key.startswith("BOT-"):
+    if not api_key or not api_key.startswith("GOB-"):
         return None
     
     conn = get_db_connection()
@@ -447,6 +459,19 @@ def register_commands():
                     "description": "Describe your issue",
                     "type": 3,
                     "required": True
+                },
+                {
+                    "name": "category",
+                    "description": "Ticket category",
+                    "type": 3,
+                    "required": True,
+                    "choices": [
+                        {"name": "🐛 Bug Report", "value": "Bug Report"},
+                        {"name": "✨ Feature Request", "value": "Feature Request"},
+                        {"name": "👤 Account Issue", "value": "Account Issue"},
+                        {"name": "🔧 Technical Support", "value": "Technical Support"},
+                        {"name": "❓ Other", "value": "Other"}
+                    ]
                 }
             ]
         },
@@ -458,6 +483,11 @@ def register_commands():
         {
             "name": "stats",
             "description": "Show your stats",
+            "type": 1
+        },
+        {
+            "name": "key",
+            "description": "Show your API key",
             "type": 1
         }
     ]
@@ -482,52 +512,6 @@ def register_commands():
         logger.error(f"❌ Error registering commands: {e}")
         return False
 
-def send_webhook_stats(server_id):
-    """Send stats to webhook"""
-    conn = get_db_connection()
-    webhooks = conn.execute(
-        'SELECT * FROM webhooks WHERE server_id = ? AND is_active = 1',
-        (server_id,)
-    ).fetchall()
-    
-    if not webhooks:
-        conn.close()
-        return
-    
-    players = conn.execute(
-        'SELECT COUNT(*) as count FROM players WHERE server_id = ?',
-        (server_id,)
-    ).fetchone()['count']
-    
-    total_kills = conn.execute(
-        'SELECT SUM(total_kills) as sum FROM players WHERE server_id = ?',
-        (server_id,)
-    ).fetchone()['sum'] or 0
-    
-    open_tickets = conn.execute(
-        'SELECT COUNT(*) as count FROM tickets WHERE status = "open"'
-    ).fetchone()['count']
-    
-    conn.close()
-    
-    for webhook in webhooks:
-        try:
-            embed = {
-                "title": "📊 Server Statistics",
-                "description": "Automatic stats update",
-                "color": 0x3498db,
-                "fields": [
-                    {"name": "👥 Players", "value": str(players), "inline": True},
-                    {"name": "🎯 Total Kills", "value": str(total_kills), "inline": True},
-                    {"name": "🎫 Open Tickets", "value": str(open_tickets), "inline": True}
-                ],
-                "timestamp": datetime.utcnow().isoformat()
-            }
-            
-            requests.post(webhook['webhook_url'], json={"embeds": [embed]}, timeout=5)
-        except:
-            continue
-
 # =============================================================================
 # DISCORD INTERACTIONS
 # =============================================================================
@@ -542,6 +526,54 @@ def interactions():
     
     if data.get('type') == 1:
         return jsonify({"type": 1})
+    
+    # Handle button clicks
+    if data.get('type') == 3:
+        custom_id = data.get('data', {}).get('custom_id', '')
+        user_id = data.get('member', {}).get('user', {}).get('id')
+        channel_id = data.get('channel_id')
+        
+        if custom_id.startswith('close_ticket_'):
+            ticket_id = custom_id.replace('close_ticket_', '')
+            
+            # Get ticket info
+            conn = get_db_connection()
+            ticket = conn.execute(
+                'SELECT * FROM tickets WHERE ticket_id = ?',
+                (ticket_id,)
+            ).fetchone()
+            conn.close()
+            
+            if ticket:
+                # Check if user has permission to close
+                can_close = False
+                if str(user_id) == str(ticket['discord_id']):
+                    can_close = True
+                elif MOD_ROLE_ID:
+                    # Check if user has mod role
+                    member = get_guild_member(data.get('guild_id'), user_id)
+                    if member and MOD_ROLE_ID in member.get('roles', []):
+                        can_close = True
+                
+                if can_close:
+                    close_ticket_channel(channel_id, ticket_id, user_id)
+                    return jsonify({
+                        "type": 4,
+                        "data": {
+                            "content": f"✅ Ticket `{ticket_id}` has been closed.",
+                            "flags": 64
+                        }
+                    })
+                else:
+                    return jsonify({
+                        "type": 4,
+                        "data": {
+                            "content": "❌ You don't have permission to close this ticket.",
+                            "flags": 64
+                        }
+                    })
+        
+        return jsonify({"type": 6})  # ACK
     
     if data.get('type') == 2:
         command = data.get('data', {}).get('name')
@@ -571,11 +603,16 @@ def interactions():
             ).fetchone()
             
             if existing:
+                api_key = existing['api_key']
                 conn.close()
                 return jsonify({
                     "type": 4,
                     "data": {
-                        "content": f"Already registered as `{existing['in_game_name']}`",
+                        "content": (
+                            f"Already registered as `{existing['in_game_name']}`\n\n"
+                            f"**Your API Key:**\n`{api_key}`\n\n"
+                            f"Dashboard: {request.host_url}"
+                        ),
                         "flags": 64
                     }
                 })
@@ -592,16 +629,17 @@ def interactions():
             conn.commit()
             conn.close()
             
-            send_webhook_stats(server_id)
+            admin_note = "\n⚠️ **Admin access detected** - You have additional privileges." if is_admin else ""
             
             return jsonify({
                 "type": 4,
                 "data": {
                     "content": (
-                        f"✅ **Registered Successfully**\n\n"
-                        f"**Name:** `{in_game_name}`\n\n"
+                        f"✅ **Registered Successfully**{admin_note}\n\n"
+                        f"**Name:** `{in_game_name}`\n"
+                        f"**API Key:** `{api_key}`\n\n"
                         f"**Dashboard:** {request.host_url}\n"
-                        f"Login to view your API key"
+                        f"Login to access your full dashboard"
                     ),
                     "flags": 64
                 }
@@ -610,74 +648,43 @@ def interactions():
         elif command == 'ticket':
             options = data.get('data', {}).get('options', [])
             issue = options[0].get('value', 'No issue specified') if options else 'No issue specified'
+            category = options[1].get('value', 'Other') if len(options) > 1 else 'Other'
             
-            ticket_id = f"TICKET-{int(time.time())}-{random.randint(1000, 9999)}"
+            ticket_id = f"T-{int(time.time()) % 10000:04d}"
             
-            # Create ticket in database first
+            # Create ticket in database
             conn = get_db_connection()
             conn.execute('''
                 INSERT INTO tickets 
-                (ticket_id, discord_id, discord_name, issue)
-                VALUES (?, ?, ?, ?)
-            ''', (ticket_id, user_id, user_name, issue))
+                (ticket_id, discord_id, discord_name, issue, category)
+                VALUES (?, ?, ?, ?, ?)
+            ''', (ticket_id, user_id, user_name, issue, category))
             conn.commit()
             
-            # Try to create private channel
-            import asyncio
-            try:
-                loop = asyncio.new_event_loop()
-                asyncio.set_event_loop(loop)
-                channel_id = loop.run_until_complete(
-                    create_ticket_channel(server_id, user_id, user_name, ticket_id, issue)
+            # Create private channel
+            channel_id = create_ticket_channel(server_id, user_id, user_name, ticket_id, issue, category)
+            
+            if channel_id:
+                conn.execute(
+                    'UPDATE tickets SET channel_id = ? WHERE ticket_id = ?',
+                    (channel_id, ticket_id)
                 )
+                conn.commit()
+                conn.close()
                 
-                if channel_id:
-                    conn.execute(
-                        'UPDATE tickets SET channel_id = ? WHERE ticket_id = ?',
-                        (channel_id, ticket_id)
-                    )
-                    conn.commit()
-                    conn.close()
-                    
-                    return jsonify({
-                        "type": 4,
-                        "data": {
-                            "content": (
-                                f"✅ **Ticket Created**\n\n"
-                                f"**Ticket ID:** `{ticket_id}`\n"
-                                f"**Channel:** <#{channel_id}>\n\n"
-                                f"A private channel has been created for this ticket."
-                            ),
-                            "flags": 64
-                        }
-                    })
-                else:
-                    conn.close()
-                    return jsonify({
-                        "type": 4,
-                        "data": {
-                            "content": (
-                                f"✅ **Ticket Created**\n\n"
-                                f"**Ticket ID:** `{ticket_id}`\n"
-                                f"**Issue:** {issue}\n\n"
-                                f"*Note: Could not create private channel. Support will contact you.*"
-                            ),
-                            "flags": 64
-                        }
-                    })
-                    
-            except Exception as e:
-                logger.error(f"Ticket channel creation error: {e}")
+                return jsonify({
+                    "type": 4,
+                    "data": {
+                        "content": f"✅ **Ticket Created**\n\n**Ticket ID:** `{ticket_id}`\n**Channel:** <#{channel_id}>",
+                        "flags": 64
+                    }
+                })
+            else:
                 conn.close()
                 return jsonify({
                     "type": 4,
                     "data": {
-                        "content": (
-                            f"✅ **Ticket Created**\n\n"
-                            f"**Ticket ID:** `{ticket_id}`\n"
-                            f"**Issue:** {issue}\n\n"
-                            f"Our team will review your ticket."
-                        ),
+                        "content": f"✅ **Ticket Created**\n\n**Ticket ID:** `{ticket_id}`\n*Could not create private channel*",
                         "flags": 64
                     }
                 })
@@ -689,9 +696,9 @@ def interactions():
                 'SELECT * FROM tickets WHERE channel_id = ? AND status = "open"',
                 (data.get('channel_id'),)
             ).fetchone()
+            conn.close()
             
             if not ticket:
-                conn.close()
                 return jsonify({
                     "type": 4,
                     "data": {
@@ -700,17 +707,8 @@ def interactions():
                     }
                 })
             
-            # Update ticket status
-            conn.execute('''
-                UPDATE tickets 
-                SET status = "closed", resolved_at = CURRENT_TIMESTAMP, assigned_to = ?
-                WHERE ticket_id = ?
-            ''', (user_name, ticket['ticket_id']))
-            conn.commit()
-            conn.close()
-            
-            # Close the channel
-            close_ticket_channel(data.get('channel_id'), user_id)
+            # Close the ticket
+            close_ticket_channel(data.get('channel_id'), ticket['ticket_id'], user_id)
             
             return jsonify({
                 "type": 4,
@@ -755,6 +753,36 @@ def interactions():
                     "flags": 64
                 }
             })
+        
+        elif command == 'key':
+            conn = get_db_connection()
+            player = conn.execute(
+                'SELECT * FROM players WHERE discord_id = ?',
+                (user_id,)
+            ).fetchone()
+            conn.close()
+            
+            if not player:
+                return jsonify({
+                    "type": 4,
+                    "data": {
+                        "content": "❌ Not registered. Use `/register [name]` first",
+                        "flags": 64
+                    }
+                })
+            
+            return jsonify({
+                "type": 4,
+                "data": {
+                    "content": (
+                        f"🔑 **Your API Key**\n\n"
+                        f"`{player['api_key']}`\n\n"
+                        f"**Dashboard:** {request.host_url}\n"
+                        f"Use this key to login to your dashboard"
+                    ),
+                    "flags": 64
+                }
+            })
     
     return jsonify({
         "type": 4,
@@ -791,12 +819,12 @@ def verify_discord_signature(request):
         return False
 
 # =============================================================================
-# WEB INTERFACE - ORIGINAL DESIGN
+# WEB INTERFACE - PINK/PURPLE DESIGN
 # =============================================================================
 
 @app.route('/')
 def home():
-    """Original web design"""
+    """Pink/Purple web design"""
     if 'user_key' in session:
         user_data = validate_api_key(session['user_key'])
         if user_data:
@@ -806,7 +834,7 @@ def home():
     <!DOCTYPE html>
     <html>
     <head>
-        <title>Bot Dashboard</title>
+        <title>GOBLIN Dashboard</title>
         <meta charset="UTF-8">
         <meta name="viewport" content="width=device-width, initial-scale=1.0">
         <style>
@@ -818,8 +846,8 @@ def home():
             
             body {
                 font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
-                background: #000;
-                color: #fff;
+                background: linear-gradient(135deg, #0f0c29, #302b63, #24243e);
+                color: white;
                 min-height: 100vh;
                 overflow: hidden;
                 position: relative;
@@ -836,7 +864,7 @@ def home():
             
             .dot {
                 position: absolute;
-                background: #00ff00;
+                background: linear-gradient(45deg, #ff00ff, #9d00ff);
                 border-radius: 50%;
                 animation: float 20s infinite linear;
             }
@@ -847,10 +875,10 @@ def home():
                     opacity: 0;
                 }
                 10% {
-                    opacity: 1;
+                    opacity: 0.7;
                 }
                 90% {
-                    opacity: 1;
+                    opacity: 0.7;
                 }
                 100% {
                     transform: translate(calc(100vw * var(--tx)), calc(100vh * var(--ty))) rotate(360deg);
@@ -871,12 +899,12 @@ def home():
                 font-size: 4rem;
                 font-weight: 900;
                 margin-bottom: 20px;
-                background: linear-gradient(45deg, #00ff00, #00cc00, #009900);
+                background: linear-gradient(45deg, #ff00ff, #9d00ff, #00d4ff);
                 -webkit-background-clip: text;
                 -webkit-text-fill-color: transparent;
                 background-size: 200% 200%;
                 animation: gradient 3s ease infinite;
-                text-shadow: 0 0 30px rgba(0, 255, 0, 0.3);
+                text-shadow: 0 0 30px rgba(255, 0, 255, 0.3);
             }
             
             @keyframes gradient {
@@ -887,7 +915,7 @@ def home():
             
             .subtitle {
                 font-size: 1.2rem;
-                color: #888;
+                color: #b19cd9;
                 margin-bottom: 40px;
                 animation: fadeIn 2s;
             }
@@ -900,70 +928,82 @@ def home():
             .key-input {
                 width: 100%;
                 padding: 20px;
-                background: rgba(30, 30, 30, 0.8);
-                border: 2px solid #00ff00;
-                border-radius: 10px;
+                background: rgba(255, 255, 255, 0.1);
+                border: 2px solid #9d00ff;
+                border-radius: 15px;
                 color: white;
                 font-size: 18px;
                 text-align: center;
                 margin-bottom: 25px;
                 transition: all 0.3s;
-                font-family: monospace;
-                letter-spacing: 2px;
+                backdrop-filter: blur(10px);
             }
             
             .key-input:focus {
                 outline: none;
-                border-color: #00cc00;
-                box-shadow: 0 0 20px rgba(0, 255, 0, 0.3);
+                border-color: #ff00ff;
+                box-shadow: 0 0 30px rgba(255, 0, 255, 0.4);
                 transform: scale(1.02);
+                background: rgba(255, 255, 255, 0.15);
+            }
+            
+            .key-input::placeholder {
+                color: #b19cd9;
             }
             
             .login-btn {
                 width: 100%;
                 padding: 20px;
-                background: rgba(0, 255, 0, 0.1);
-                border: 2px solid #00ff00;
-                color: #00ff00;
-                border-radius: 10px;
+                background: linear-gradient(45deg, #ff00ff, #9d00ff);
+                color: white;
+                border: none;
+                border-radius: 15px;
                 font-size: 18px;
                 font-weight: bold;
                 cursor: pointer;
                 transition: all 0.3s;
                 position: relative;
                 overflow: hidden;
+                text-transform: uppercase;
+                letter-spacing: 1px;
             }
             
             .login-btn:hover {
-                background: rgba(0, 255, 0, 0.2);
-                transform: translateY(-3px);
-                box-shadow: 0 10px 20px rgba(0, 255, 0, 0.2);
+                transform: translateY(-5px);
+                box-shadow: 0 15px 35px rgba(255, 0, 255, 0.4);
+                background: linear-gradient(45deg, #9d00ff, #ff00ff);
             }
             
-            .login-btn::before {
+            .login-btn:active {
+                transform: translateY(-2px);
+            }
+            
+            .login-btn::after {
                 content: '';
                 position: absolute;
-                top: 0;
-                left: -100%;
-                width: 100%;
-                height: 100%;
-                background: linear-gradient(90deg, transparent, rgba(0, 255, 0, 0.2), transparent);
-                transition: left 0.5s;
+                top: -50%;
+                left: -50%;
+                width: 200%;
+                height: 200%;
+                background: linear-gradient(45deg, transparent, rgba(255, 255, 255, 0.2), transparent);
+                transform: rotate(45deg);
+                transition: all 0.5s;
             }
             
-            .login-btn:hover::before {
+            .login-btn:hover::after {
                 left: 100%;
             }
             
             .error-box {
-                background: rgba(255, 0, 0, 0.1);
-                border: 2px solid #ff0000;
-                border-radius: 10px;
+                background: rgba(255, 0, 0, 0.2);
+                border: 2px solid rgba(255, 0, 0, 0.4);
+                border-radius: 15px;
                 padding: 16px;
                 margin-top: 20px;
-                color: #ff5555;
+                color: #ff6b6b;
                 display: none;
                 animation: shake 0.5s;
+                backdrop-filter: blur(10px);
             }
             
             @keyframes shake {
@@ -973,42 +1013,51 @@ def home():
             }
             
             .info-box {
-                background: rgba(0, 255, 0, 0.1);
-                border: 2px solid #00ff00;
-                border-radius: 10px;
+                background: rgba(157, 0, 255, 0.2);
+                border: 2px solid rgba(157, 0, 255, 0.4);
+                border-radius: 15px;
                 padding: 25px;
                 margin-top: 35px;
                 text-align: left;
-                color: #cbd5e1;
+                color: #d4b3ff;
+                backdrop-filter: blur(10px);
             }
             
             .info-box strong {
-                color: #00ff00;
+                color: #ff00ff;
                 display: block;
                 margin-bottom: 15px;
+                font-size: 1.1rem;
+            }
+            
+            .info-box code {
+                background: rgba(0, 0, 0, 0.3);
+                padding: 3px 8px;
+                border-radius: 5px;
+                font-family: monospace;
+                color: #9d00ff;
+                margin: 0 2px;
             }
             
             .bot-status {
-                padding: 10px 20px;
-                background: rgba(30, 30, 30, 0.8);
-                border: 2px solid rgba(0, 255, 0, 0.3);
-                border-radius: 20px;
+                padding: 12px 24px;
+                background: rgba(255, 255, 255, 0.1);
+                border: 2px solid rgba(157, 0, 255, 0.4);
+                border-radius: 25px;
                 margin-top: 25px;
                 display: inline-block;
-                animation: pulse 2s infinite;
-            }
-            
-            @keyframes pulse {
-                0%, 100% { opacity: 1; }
-                50% { opacity: 0.5; }
+                backdrop-filter: blur(10px);
+                font-weight: 600;
             }
             
             .status-online {
-                color: #00ff00;
+                color: #00ff9d;
+                border-color: rgba(0, 255, 157, 0.4);
             }
             
             .status-offline {
-                color: #ff0000;
+                color: #ff6b6b;
+                border-color: rgba(255, 107, 107, 0.4);
             }
             
             @media (max-width: 768px) {
@@ -1016,7 +1065,7 @@ def home():
                     padding: 20px;
                 }
                 .logo {
-                    font-size: 2.5rem;
+                    font-size: 3rem;
                 }
             }
         </style>
@@ -1026,17 +1075,17 @@ def home():
         
         <div class="container">
             <div class="logo">GOBLIN</div>
-            <div class="subtitle">Enter your API key to access the dashboard</div>
+            <div class="subtitle">Enter your API key to access the neon dashboard</div>
             
             <input type="password" 
                    class="key-input" 
                    id="apiKey" 
-                   placeholder="Enter your API key"
+                   placeholder="GOB-XXXXXXXXXXXXXXXX"
                    autocomplete="off"
                    spellcheck="false">
             
             <button class="login-btn" onclick="validateKey()">
-                Access Dashboard
+                Enter Dashboard
             </button>
             
             <div class="error-box" id="errorMessage">
@@ -1044,37 +1093,39 @@ def home():
             </div>
             
             <div class="info-box">
-                <strong>How to get started:</strong>
+                <strong>How to get your API key:</strong>
                 <p>1. Use <code>/register your_name</code> in Discord</p>
-                <p>2. Login to dashboard to view your API key</p>
-                <p>3. Access stats, tickets, and updates</p>
+                <p>2. Copy your <code>GOB-XXXXXXX</code> key from bot response</p>
+                <p>3. Use <code>/key</code> to see your key anytime</p>
+                <p>4. Enter it above to access your dashboard</p>
             </div>
             
             <div class="bot-status" id="botStatus">
-                Bot Status: Checking...
+                ⚡ Bot Status: Checking...
             </div>
         </div>
         
         <script>
             function initBackground() {
                 const container = document.getElementById('bgAnimation');
-                for (let i = 0; i < 30; i++) {
+                for (let i = 0; i < 40; i++) {
                     const dot = document.createElement('div');
                     dot.className = 'dot';
-                    dot.style.width = dot.style.height = Math.random() * 3 + 1 + 'px';
+                    const size = Math.random() * 4 + 2;
+                    dot.style.width = dot.style.height = size + 'px';
                     dot.style.left = Math.random() * 100 + '%';
                     dot.style.top = Math.random() * 100 + '%';
-                    dot.style.opacity = Math.random() * 0.5 + 0.1;
+                    dot.style.opacity = Math.random() * 0.6 + 0.2;
                     dot.style.setProperty('--tx', Math.random() * 2 - 1);
                     dot.style.setProperty('--ty', Math.random() * 2 - 1);
                     dot.style.animationDelay = Math.random() * 5 + 's';
-                    dot.style.animationDuration = Math.random() * 15 + 15 + 's';
+                    dot.style.animationDuration = Math.random() * 20 + 20 + 's';
                     container.appendChild(dot);
                 }
             }
             
             async function validateKey() {
-                const key = document.getElementById('apiKey').value.trim();
+                const key = document.getElementById('apiKey').value.trim().toUpperCase();
                 const errorDiv = document.getElementById('errorMessage');
                 const btn = document.querySelector('.login-btn');
                 
@@ -1084,7 +1135,13 @@ def home():
                     return;
                 }
                 
-                btn.innerHTML = 'Checking...';
+                if (!key.startsWith('GOB-')) {
+                    errorDiv.textContent = "Key must start with GOB-";
+                    errorDiv.style.display = 'block';
+                    return;
+                }
+                
+                btn.innerHTML = '🔮 Checking...';
                 btn.disabled = true;
                 
                 try {
@@ -1098,22 +1155,21 @@ def home():
                     
                     if (data.valid) {
                         btn.innerHTML = '✅ Access Granted';
-                        btn.style.background = 'rgba(0, 255, 0, 0.2)';
-                        btn.style.borderColor = '#00cc00';
+                        btn.style.background = 'linear-gradient(45deg, #00ff9d, #00d4ff)';
                         
                         setTimeout(() => {
                             window.location.href = '/dashboard';
-                        }, 500);
+                        }, 600);
                     } else {
                         errorDiv.textContent = data.error || 'Invalid API key';
                         errorDiv.style.display = 'block';
-                        btn.innerHTML = 'Access Dashboard';
+                        btn.innerHTML = 'Enter Dashboard';
                         btn.disabled = false;
                     }
                 } catch (error) {
                     errorDiv.textContent = 'Connection error';
                     errorDiv.style.display = 'block';
-                    btn.innerHTML = 'Access Dashboard';
+                    btn.innerHTML = 'Enter Dashboard';
                     btn.disabled = false;
                 }
             }
@@ -1176,7 +1232,7 @@ def logout():
 
 @app.route('/dashboard')
 def dashboard():
-    """Dashboard with original design"""
+    """Pink/Purple dashboard"""
     if 'user_key' not in session:
         return redirect(url_for('home'))
     
@@ -1189,34 +1245,41 @@ def dashboard():
     total_games = user_data.get('wins', 0) + user_data.get('losses', 0)
     win_rate = (user_data.get('wins', 0) / total_games * 100) if total_games > 0 else 0
     
-    # Get updates
+    is_admin = user_data.get('is_admin', 0)
+    
+    # Get open tickets for this user
     conn = get_db_connection()
-    updates = conn.execute('SELECT * FROM updates ORDER BY uploaded_at DESC LIMIT 3').fetchall()
+    tickets = conn.execute(
+        'SELECT * FROM tickets WHERE discord_id = ? AND status = "open" ORDER BY created_at DESC LIMIT 5',
+        (user_data['discord_id'],)
+    ).fetchall()
     conn.close()
     
-    updates_html = ''
-    for update in updates:
-        critical = '🚨 ' if update['is_critical'] else ''
-        uploaded_by = f" by {update['uploaded_by']}" if update['uploaded_by'] else ''
-        updates_html += f'''
-        <div class="stat-card">
-            <div style="color: #00ff00; font-weight: bold; margin-bottom: 10px;">
-                {critical}v{update['version']} ({update['file_size']})
+    tickets_html = ''
+    for ticket in tickets:
+        category_info = next((c for c in TICKET_CATEGORIES if c["name"] == ticket['category']), TICKET_CATEGORIES[-1])
+        tickets_html += f'''
+        <div class="ticket-card">
+            <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px;">
+                <div>
+                    <span style="color: { '#' + hex(category_info['color'])[2:] };">{category_info['emoji']}</span>
+                    <strong>TICKET-{ticket['ticket_id']}</strong>
+                </div>
+                <span style="color: #00ff9d; font-size: 0.9rem;">OPEN</span>
             </div>
-            <div style="color: #ccc; margin-bottom: 15px;">{update['changelog']}{uploaded_by}</div>
-            <button class="action-btn" onclick="window.open('{update['download_url']}', '_blank')" style="width: 100%;">
-                📥 Download Update
-            </button>
+            <p style="color: #d4b3ff; margin-bottom: 15px;">{ticket['issue'][:80]}...</p>
+            <div style="display: flex; gap: 10px;">
+                <button class="ticket-btn" onclick="viewTicket('{ticket['ticket_id']}')">View</button>
+                <button class="ticket-btn close" onclick="closeTicket('{ticket['ticket_id']}')">Close</button>
+            </div>
         </div>
         '''
-    
-    is_admin = user_data.get('is_admin', 0)
     
     return f'''
     <!DOCTYPE html>
     <html>
     <head>
-        <title>Dashboard</title>
+        <title>GOBLIN Dashboard</title>
         <meta charset="UTF-8">
         <meta name="viewport" content="width=device-width, initial-scale=1.0">
         <style>
@@ -1228,10 +1291,9 @@ def dashboard():
             
             body {{
                 font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
-                background: #000;
-                color: #fff;
+                background: linear-gradient(135deg, #0f0c29, #302b63, #24243e);
+                color: white;
                 min-height: 100vh;
-                overflow-x: hidden;
                 position: relative;
             }}
             
@@ -1242,14 +1304,14 @@ def dashboard():
                 width: 100%;
                 height: 100%;
                 z-index: -1;
-                opacity: 0.3;
+                opacity: 0.2;
             }}
             
             .bg-dot {{
                 position: absolute;
-                background: #00ff00;
+                background: linear-gradient(45deg, #ff00ff, #9d00ff);
                 border-radius: 50%;
-                animation: floatBg 40s infinite linear;
+                animation: floatBg 50s infinite linear;
             }}
             
             @keyframes floatBg {{
@@ -1258,22 +1320,22 @@ def dashboard():
             }}
             
             .header {{
-                background: rgba(20, 20, 20, 0.9);
-                border-bottom: 3px solid #00ff00;
-                padding: 20px 40px;
+                background: rgba(15, 12, 41, 0.9);
+                backdrop-filter: blur(20px);
+                border-bottom: 3px solid #ff00ff;
+                padding: 25px 40px;
                 display: flex;
                 justify-content: space-between;
                 align-items: center;
-                backdrop-filter: blur(20px);
                 position: sticky;
                 top: 0;
                 z-index: 100;
             }}
             
             .logo {{
-                font-size: 1.8rem;
+                font-size: 2rem;
                 font-weight: 900;
-                background: linear-gradient(45deg, #00ff00, #00cc00);
+                background: linear-gradient(45deg, #ff00ff, #9d00ff);
                 -webkit-background-clip: text;
                 -webkit-text-fill-color: transparent;
             }}
@@ -1285,32 +1347,30 @@ def dashboard():
             }}
             
             .admin-badge {{
-                background: rgba(0, 255, 0, 0.2);
-                border: 2px solid #00ff00;
-                color: #00ff00;
-                padding: 5px 12px;
+                background: linear-gradient(45deg, #ff00ff, #9d00ff);
+                color: white;
+                padding: 6px 15px;
                 border-radius: 20px;
                 font-size: 0.8rem;
                 font-weight: bold;
+                box-shadow: 0 0 15px rgba(255, 0, 255, 0.4);
             }}
             
             .logout-btn {{
                 padding: 10px 24px;
-                background: rgba(255, 0, 0, 0.2);
-                border: 2px solid #ff0000;
-                color: #ff5555;
-                border-radius: 10px;
+                background: linear-gradient(45deg, #ff416c, #ff4b2b);
+                color: white;
+                border: none;
+                border-radius: 12px;
                 font-weight: bold;
                 cursor: pointer;
                 text-decoration: none;
-                display: inline-block;
                 transition: all 0.3s;
             }}
             
             .logout-btn:hover {{
-                background: rgba(255, 0, 0, 0.3);
                 transform: translateY(-3px);
-                box-shadow: 0 10px 20px rgba(255, 0, 0, 0.2);
+                box-shadow: 0 10px 25px rgba(255, 65, 108, 0.4);
             }}
             
             .container {{
@@ -1321,25 +1381,27 @@ def dashboard():
             
             .stats-grid {{
                 display: grid;
-                grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
-                gap: 20px;
-                margin-bottom: 40px;
+                grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+                gap: 25px;
+                margin-bottom: 50px;
             }}
             
             .stat-card {{
-                background: rgba(30, 30, 30, 0.8);
-                border: 2px solid #00ff00;
-                border-radius: 15px;
-                padding: 30px;
+                background: rgba(255, 255, 255, 0.1);
+                backdrop-filter: blur(20px);
+                border-radius: 20px;
+                padding: 35px;
                 text-align: center;
-                transition: all 0.3s;
+                border: 2px solid rgba(157, 0, 255, 0.3);
+                transition: all 0.4s;
                 position: relative;
                 overflow: hidden;
             }}
             
             .stat-card:hover {{
-                transform: translateY(-10px);
-                box-shadow: 0 20px 40px rgba(0, 255, 0, 0.2);
+                transform: translateY(-10px) scale(1.02);
+                border-color: rgba(255, 0, 255, 0.5);
+                box-shadow: 0 20px 40px rgba(255, 0, 255, 0.3);
             }}
             
             .stat-card::before {{
@@ -1349,29 +1411,32 @@ def dashboard():
                 left: 0;
                 right: 0;
                 height: 3px;
-                background: linear-gradient(90deg, #00ff00, #00cc00);
+                background: linear-gradient(90deg, #ff00ff, #9d00ff);
             }}
             
             .stat-value {{
-                font-size: 3rem;
+                font-size: 3.5rem;
                 font-weight: 900;
-                margin: 15px 0;
+                margin: 20px 0;
                 font-family: 'Segoe UI', sans-serif;
+                text-shadow: 0 0 20px currentColor;
             }}
             
             .stat-label {{
-                color: #888;
-                font-size: 0.9rem;
+                color: #b19cd9;
+                font-size: 0.95rem;
                 text-transform: uppercase;
                 letter-spacing: 2px;
+                margin-bottom: 10px;
             }}
             
             .key-section {{
-                background: rgba(30, 30, 30, 0.8);
-                border: 2px solid #00ff00;
-                border-radius: 15px;
-                padding: 40px;
-                margin-bottom: 40px;
+                background: rgba(255, 255, 255, 0.1);
+                backdrop-filter: blur(20px);
+                border-radius: 25px;
+                padding: 50px;
+                margin-bottom: 50px;
+                border: 2px solid rgba(157, 0, 255, 0.3);
                 position: relative;
                 overflow: hidden;
             }}
@@ -1383,23 +1448,24 @@ def dashboard():
                 left: 0;
                 right: 0;
                 height: 3px;
-                background: linear-gradient(90deg, #00ff00, #00cc00);
+                background: linear-gradient(90deg, #00ff9d, #00d4ff);
             }}
             
             .key-display {{
-                background: rgba(0, 0, 0, 0.5);
-                border: 2px solid #00ff00;
-                border-radius: 10px;
+                background: rgba(0, 0, 0, 0.4);
+                border: 2px solid rgba(157, 0, 255, 0.5);
+                border-radius: 16px;
                 padding: 25px;
                 margin: 30px 0;
                 font-family: monospace;
-                color: #00ff00;
+                color: #00ff9d;
                 text-align: center;
                 cursor: pointer;
                 position: relative;
                 overflow: hidden;
-                letter-spacing: 1px;
-                font-size: 1.1rem;
+                letter-spacing: 2px;
+                font-size: 1.3rem;
+                text-shadow: 0 0 10px #00ff9d;
             }}
             
             .key-display::before {{
@@ -1415,75 +1481,116 @@ def dashboard():
                 justify-content: center;
                 font-family: sans-serif;
                 font-size: 1.2rem;
-                color: #888;
+                color: #b19cd9;
+                backdrop-filter: blur(5px);
             }}
             
             .key-display.revealed::before {{
                 display: none;
             }}
             
-            .updates-section {{
-                background: rgba(30, 30, 30, 0.8);
-                border: 2px solid #00ff00;
-                border-radius: 15px;
-                padding: 40px;
-                margin-bottom: 40px;
+            .tickets-section {{
+                background: rgba(255, 255, 255, 0.1);
+                backdrop-filter: blur(20px);
+                border-radius: 25px;
+                padding: 50px;
+                margin-bottom: 50px;
+                border: 2px solid rgba(255, 0, 255, 0.3);
+            }}
+            
+            .ticket-card {{
+                background: rgba(0, 0, 0, 0.3);
+                border-radius: 16px;
+                padding: 25px;
+                margin-bottom: 20px;
+                border: 1px solid rgba(157, 0, 255, 0.2);
+                transition: all 0.3s;
+            }}
+            
+            .ticket-card:hover {{
+                border-color: rgba(255, 0, 255, 0.4);
+                transform: translateX(10px);
+            }}
+            
+            .ticket-btn {{
+                padding: 10px 20px;
+                background: rgba(157, 0, 255, 0.3);
+                border: 2px solid #9d00ff;
+                color: white;
+                border-radius: 8px;
+                cursor: pointer;
+                transition: all 0.3s;
+                font-weight: bold;
+            }}
+            
+            .ticket-btn:hover {{
+                background: rgba(157, 0, 255, 0.5);
+                transform: translateY(-3px);
+            }}
+            
+            .ticket-btn.close {{
+                background: rgba(255, 0, 0, 0.3);
+                border-color: #ff0000;
             }}
             
             .action-buttons {{
                 display: flex;
-                gap: 15px;
-                margin-top: 30px;
+                gap: 20px;
+                margin-top: 40px;
                 flex-wrap: wrap;
             }}
             
             .action-btn {{
-                padding: 15px 30px;
-                background: rgba(0, 255, 0, 0.1);
-                border: 2px solid #00ff00;
-                color: #00ff00;
-                border-radius: 10px;
+                padding: 18px 36px;
+                background: linear-gradient(45deg, #ff00ff, #9d00ff);
+                color: white;
+                border: none;
+                border-radius: 15px;
                 font-weight: bold;
+                font-size: 16px;
                 cursor: pointer;
                 transition: all 0.3s;
                 text-decoration: none;
                 display: inline-flex;
                 align-items: center;
-                gap: 10px;
+                gap: 15px;
+                flex: 1;
+                min-width: 200px;
+                justify-content: center;
+                text-transform: uppercase;
+                letter-spacing: 1px;
             }}
             
             .action-btn:hover {{
-                background: rgba(0, 255, 0, 0.2);
-                transform: translateY(-5px);
-                box-shadow: 0 10px 20px rgba(0, 255, 0, 0.2);
+                transform: translateY(-8px);
+                box-shadow: 0 15px 35px rgba(255, 0, 255, 0.4);
+                background: linear-gradient(45deg, #9d00ff, #ff00ff);
             }}
             
             .action-btn.admin {{
-                background: rgba(255, 165, 0, 0.1);
-                border-color: #ffa500;
-                color: #ffa500;
+                background: linear-gradient(45deg, #00ff9d, #00d4ff);
             }}
             
             .action-btn.admin:hover {{
-                background: rgba(255, 165, 0, 0.2);
-                box-shadow: 0 10px 20px rgba(255, 165, 0, 0.2);
+                box-shadow: 0 15px 35px rgba(0, 255, 157, 0.4);
             }}
             
             .notification {{
                 position: fixed;
                 bottom: 30px;
                 right: 30px;
-                background: rgba(0, 255, 0, 0.9);
+                background: linear-gradient(45deg, #00ff9d, #00d4ff);
                 color: black;
-                padding: 15px 25px;
-                border-radius: 10px;
+                padding: 20px 30px;
+                border-radius: 15px;
                 z-index: 1000;
                 display: none;
-                animation: slideIn 0.5s;
+                animation: slideInRight 0.5s ease-out;
                 font-weight: bold;
+                box-shadow: 0 10px 30px rgba(0, 255, 157, 0.4);
             }}
             
-            @keyframes slideIn {{
+            @keyframes slideInRight {{
                 from {{ transform: translateX(100%); opacity: 0; }}
                 to {{ transform: translateX(0); opacity: 1; }}
             }}
@@ -1501,15 +1608,18 @@ def dashboard():
                 .stats-grid {{
                     grid-template-columns: 1fr;
                 }}
-                .key-section, .updates-section {{
+                .key-section, .tickets-section {{
                     padding: 30px 20px;
                 }}
                 .action-buttons {{
                     flex-direction: column;
                 }}
                 .action-btn {{
-                    width: 100%;
-                    justify-content: center;
+                    min-width: 100%;
+                }}
+                .key-display {{
+                    font-size: 1.1rem;
+                    padding: 20px;
                 }}
             }}
         </style>
@@ -1521,11 +1631,11 @@ def dashboard():
             <div class="logo">GOBLIN DASHBOARD</div>
             <div class="user-info">
                 <div>
-                    <div style="display: flex; align-items: center; gap: 10px;">
-                        <strong style="color: #00ff00;">{user_data.get('in_game_name', 'Player')}</strong>
+                    <div style="display: flex; align-items: center; gap: 15px; margin-bottom: 5px;">
+                        <strong style="font-size: 1.2rem; color: #ff00ff;">{user_data.get('in_game_name', 'Player')}</strong>
                         { '<span class="admin-badge">👑 ADMIN</span>' if is_admin else '' }
                     </div>
-                    <div style="color: #888; font-size: 0.9rem;">Prestige {user_data.get('prestige', 0)}</div>
+                    <div style="color: #b19cd9; font-size: 0.9rem;">Prestige {user_data.get('prestige', 0)} • {total_games} games</div>
                 </div>
                 <a href="/logout" class="logout-btn">Logout</a>
             </div>
@@ -1535,26 +1645,26 @@ def dashboard():
             <div class="stats-grid">
                 <div class="stat-card">
                     <div class="stat-label">K/D Ratio</div>
-                    <div class="stat-value" style="color: { '#00ff00' if kd >= 1.5 else '#ffa500' if kd >= 1 else '#ff0000' };">{kd:.2f}</div>
-                    <div style="color: #ccc;">{user_data.get('total_kills', 0)} kills / {user_data.get('total_deaths', 0)} deaths</div>
+                    <div class="stat-value" style="color: { '#00ff9d' if kd >= 1.5 else '#ffd700' if kd >= 1 else '#ff6b6b' };">{kd:.2f}</div>
+                    <div style="color: #d4b3ff;">{user_data.get('total_kills', 0)} kills / {user_data.get('total_deaths', 0)} deaths</div>
                 </div>
                 
                 <div class="stat-card">
                     <div class="stat-label">Win Rate</div>
-                    <div class="stat-value" style="color: { '#00ff00' if win_rate >= 60 else '#ffa500' if win_rate >= 40 else '#ff0000' };">{win_rate:.1f}%</div>
-                    <div style="color: #ccc;">{user_data.get('wins', 0)} wins / {user_data.get('losses', 0)} losses</div>
+                    <div class="stat-value" style="color: { '#00ff9d' if win_rate >= 60 else '#ffd700' if win_rate >= 40 else '#ff6b6b' };">{win_rate:.1f}%</div>
+                    <div style="color: #d4b3ff;">{user_data.get('wins', 0)} wins / {user_data.get('losses', 0)} losses</div>
                 </div>
                 
                 <div class="stat-card">
                     <div class="stat-label">Games Played</div>
-                    <div class="stat-value" style="color: #00ff00;">{total_games}</div>
-                    <div style="color: #ccc;">Total matches</div>
+                    <div class="stat-value" style="color: #9d00ff;">{total_games}</div>
+                    <div style="color: #d4b3ff;">Total matches completed</div>
                 </div>
             </div>
             
             <div class="key-section">
-                <h2 style="color: #00ff00; margin-bottom: 20px; font-size: 1.8rem;">Your API Key</h2>
-                <p style="color: #888; margin-bottom: 20px;">
+                <h2 style="color: #ff00ff; margin-bottom: 10px; font-size: 2rem; text-shadow: 0 0 15px rgba(255, 0, 255, 0.5);">Your API Key</h2>
+                <p style="color: #b19cd9; margin-bottom: 20px; font-size: 1.1rem;">
                     Keep this key secure. Do not share it with anyone.
                 </p>
                 
@@ -1566,7 +1676,7 @@ def dashboard():
                     <button class="action-btn" onclick="copyKey()">
                         📋 Copy Key
                     </button>
-                    { '<button class="action-btn admin" onclick="changeKey()">🔑 Change Key (Admin)</button>' if is_admin else '' }
+                    { '<button class="action-btn admin" onclick="changeKey()">🔑 Change Key</button>' if is_admin else '' }
                     <button class="action-btn" onclick="refreshStats()">
                         🔄 Refresh Stats
                     </button>
@@ -1576,11 +1686,9 @@ def dashboard():
                 </div>
             </div>
             
-            <div class="updates-section">
-                <h2 style="color: #00ff00; margin-bottom: 30px; font-size: 1.8rem;">📥 Available Updates</h2>
-                <div style="display: grid; gap: 20px;">
-                    {updates_html if updates_html else '<p style="color: #888; text-align: center;">No updates available</p>'}
-                </div>
+            <div class="tickets-section">
+                <h2 style="color: #ff00ff; margin-bottom: 30px; font-size: 2rem; text-shadow: 0 0 15px rgba(255, 0, 255, 0.5);">Your Open Tickets</h2>
+                {tickets_html if tickets_html else '<p style="color: #b19cd9; text-align: center; padding: 40px;">No open tickets</p>'}
             </div>
         </div>
         
@@ -1589,16 +1697,16 @@ def dashboard():
         <script>
             function initBackground() {{
                 const container = document.getElementById('bgAnimation');
-                for (let i = 0; i < 20; i++) {{
+                for (let i = 0; i < 25; i++) {{
                     const dot = document.createElement('div');
                     dot.className = 'bg-dot';
-                    const size = Math.random() * 100 + 50;
+                    const size = Math.random() * 150 + 50;
                     dot.style.width = dot.style.height = size + 'px';
                     dot.style.left = Math.random() * 100 + '%';
                     dot.style.top = '100vh';
                     dot.style.opacity = Math.random() * 0.1 + 0.05;
                     dot.style.animationDelay = Math.random() * 20 + 's';
-                    dot.style.animationDuration = Math.random() * 30 + 30 + 's';
+                    dot.style.animationDuration = Math.random() * 40 + 40 + 's';
                     container.appendChild(dot);
                 }}
             }}
@@ -1647,10 +1755,16 @@ def dashboard():
             }}
             
             function createTicket() {{
-                const issue = prompt('Describe your issue:');
-                if (issue && issue.length > 5) {{
-                    showNotification('🎫 Creating ticket... Use /ticket in Discord for full feature.');
-                    alert('For full ticket features, use /ticket command in Discord server.');
+                alert('Use /ticket command in Discord to create tickets with categories.');
+            }}
+            
+            function viewTicket(ticketId) {{
+                alert('Ticket view feature coming soon! Use Discord channel for now.');
+            }}
+            
+            function closeTicket(ticketId) {{
+                if (confirm('Close this ticket?')) {{
+                    showNotification('🎫 Closing ticket...');
                 }}
             }}
             
@@ -1719,77 +1833,6 @@ def change_key():
     
     return jsonify({"success": True, "new_key": new_key})
 
-@app.route('/api/add-webhook', methods=['POST'])
-def add_webhook():
-    """Add webhook for stats"""
-    data = request.get_json()
-    api_key = data.get('api_key')
-    webhook_url = data.get('webhook_url')
-    server_id = data.get('server_id')
-    
-    if not api_key or not webhook_url or not server_id:
-        return jsonify({"success": False, "error": "Missing parameters"})
-    
-    user_data = validate_api_key(api_key)
-    if not user_data:
-        return jsonify({"success": False, "error": "Invalid API key"})
-    
-    if not is_user_admin_in_guild(server_id, user_data['discord_id']):
-        return jsonify({"success": False, "error": "Admin privileges required"})
-    
-    conn = get_db_connection()
-    try:
-        conn.execute('''
-            INSERT OR REPLACE INTO webhooks (webhook_url, server_id, webhook_name)
-            VALUES (?, ?, ?)
-        ''', (webhook_url, server_id, 'Stats Webhook'))
-        conn.commit()
-        conn.close()
-        
-        send_webhook_stats(server_id)
-        return jsonify({"success": True})
-    except Exception as e:
-        conn.close()
-        return jsonify({"success": False, "error": str(e)})
-
-@app.route('/api/upload-update', methods=['POST'])
-def upload_update():
-    """Upload new update (admin only)"""
-    data = request.get_json()
-    api_key = data.get('api_key')
-    
-    if not api_key:
-        return jsonify({"success": False, "error": "Missing API key"})
-    
-    user_data = validate_api_key(api_key)
-    if not user_data:
-        return jsonify({"success": False, "error": "Invalid API key"})
-    
-    if not user_data.get('is_admin'):
-        return jsonify({"success": False, "error": "Admin privileges required"})
-    
-    version = data.get('version')
-    download_url = data.get('download_url')
-    changelog = data.get('changelog')
-    file_size = data.get('file_size', 'Unknown')
-    is_critical = data.get('is_critical', False)
-    
-    if not version or not download_url or not changelog:
-        return jsonify({"success": False, "error": "Missing parameters"})
-    
-    conn = get_db_connection()
-    try:
-        conn.execute('''
-            INSERT INTO updates (version, download_url, changelog, file_size, is_critical, uploaded_by)
-            VALUES (?, ?, ?, ?, ?, ?)
-        ''', (version, download_url, changelog, file_size, is_critical, user_data['discord_name']))
-        conn.commit()
-        conn.close()
-        return jsonify({"success": True})
-    except Exception as e:
-        conn.close()
-        return jsonify({"success": False, "error": str(e)})
-
 @app.route('/api/refresh-stats')
 def refresh_stats():
     """Refresh player stats"""
@@ -1801,22 +1844,7 @@ def refresh_stats():
     if not user_data:
         return jsonify({"error": "Invalid key"}), 401
     
-    send_webhook_stats(user_data.get('server_id', ''))
     return jsonify({"success": True})
-
-@app.route('/api/latest-update')
-def latest_update():
-    """Get latest update"""
-    conn = get_db_connection()
-    update = conn.execute(
-        'SELECT * FROM updates ORDER BY uploaded_at DESC LIMIT 1'
-    ).fetchone()
-    conn.close()
-    
-    if update:
-        return jsonify(dict(update))
-    else:
-        return jsonify({"error": "No updates available"}), 404
 
 @app.route('/api/stats')
 def api_stats():
@@ -1843,36 +1871,9 @@ def health():
     return jsonify({
         "status": "healthy" if bot_active else "offline",
         "bot_active": bot_active,
-        "service": "Goblin Bot Dashboard",
-        "version": "5.0",
+        "service": "GOBLIN Bot v6.0",
         "timestamp": datetime.utcnow().isoformat()
     })
-
-# =============================================================================
-# BACKGROUND TASKS
-# =============================================================================
-
-def webhook_scheduler():
-    """Schedule webhook updates"""
-    import threading
-    import time
-    
-    def send_updates():
-        while True:
-            try:
-                conn = get_db_connection()
-                servers = conn.execute('SELECT DISTINCT server_id FROM webhooks WHERE is_active = 1').fetchall()
-                conn.close()
-                
-                for server in servers:
-                    send_webhook_stats(server['server_id'])
-                
-                time.sleep(1800)
-            except:
-                time.sleep(300)
-    
-    thread = threading.Thread(target=send_updates, daemon=True)
-    thread.start()
 
 # =============================================================================
 # STARTUP
@@ -1882,7 +1883,7 @@ if __name__ == '__main__':
     init_db()
     
     print(f"\n{'='*60}")
-    print("🤖 GOBLIN BOT DASHBOARD")
+    print("🎮 GOBLIN BOT - PINK/PURPLE EDITION")
     print(f"{'='*60}")
     
     if test_discord_token():
@@ -1896,36 +1897,38 @@ if __name__ == '__main__':
     else:
         print("❌ Discord token not set or invalid")
     
-    webhook_scheduler()
-    print("✅ Webhook scheduler started")
-    
     print(f"\n🌐 Web Interface: http://localhost:{port}")
-    print(f"🔗 Interactions: http://localhost:{port}/interactions")
+    print(f"🎨 Design: Pink/Purple neon theme")
     
     print(f"\n🎮 Discord Commands:")
     print(f"   /ping - Check bot status")
-    print(f"   /register [name] - Register (no API key shown)")
-    print(f"   /ticket [issue] - Create private ticket channel")
-    print(f"   /close - Close current ticket channel")
+    print(f"   /register [name] - Get API key (shown in Discord)")
+    print(f"   /key - Show your API key")
+    print(f"   /ticket [issue] [category] - Create private ticket")
+    print(f"   /close - Close current ticket")
     print(f"   /stats - View your stats")
     
     print(f"\n🎫 Ticket System:")
-    print(f"   • Creates private Discord channel")
-    print(f"   • Only user and mods can access")
-    print(f"   • Use /close in channel to close")
-    print(f"   • Mod role ID: {MOD_ROLE_ID or 'Not set'}")
+    print(f"   • Short channel names: ticket-1234")
+    print(f"   • Category options: Bug, Feature, Account, Tech, Other")
+    print(f"   • Close button in ticket channel")
+    print(f"   • Private channels (user + mods only)")
     
     print(f"\n🔐 Security Features:")
-    print(f"   • API keys hidden in Discord")
-    print(f"   • View keys only in dashboard")
+    print(f"   • API keys shown with /register and /key")
+    print(f"   • Keys hidden in dashboard (click to reveal)")
     print(f"   • Admin-only key changes")
     print(f"   • Private ticket channels")
     
     print(f"\n💡 How it works:")
-    print(f"   1. Use /register in Discord (no key shown)")
-    print(f"   2. Login to dashboard to view API key")
-    print(f"   3. Use /ticket for private support")
-    print(f"   4. Admins can change keys in dashboard")
+    print(f"   1. Use /register in Discord to get API key")
+    print(f"   2. Use /key to see your key anytime")
+    print(f"   3. Login to neon dashboard")
+    print(f"   4. Use /ticket for private support")
+    print(f"   5. Click close button in ticket channel")
+    
+    print(f"\n🔧 Environment Variables:")
+    print(f"   MOD_ROLE_ID={MOD_ROLE_ID or 'Not set'}")
     
     print(f"\n{'='*60}\n")
     
