@@ -1,10 +1,13 @@
 services:
   - type: web
-    name: sot-tdm-server
+    name: sea-of-thieves-tdm
     env: python
-    plan: free
     buildCommand: pip install -r requirements.txt
-    startCommand: gunicorn app:app --bind 0.0.0.0:$PORT --workers 2 --threads 4
+    startCommand: python app.py
     envVars:
-      - key: PYTHON_VERSION
-        value: 3.9.0
+      - key: DISCORD_BOT_TOKEN
+        sync: false
+      - key: DISCORD_CHANNEL_ID
+        sync: false
+      - key: PORT
+        value: 5000
