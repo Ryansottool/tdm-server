@@ -1,4 +1,906 @@
-# app.py - TOXIC GOBLIN REGISTRY (Multi-Server Ready)
+# app.py - SIMPLE ANIMATED WEB + DISCORD BOT
+import os
+import json
+import sqlite3
+import random
+import string
+import threading
+import time
+import hashlib
+import requests
+from flask import Flask, request, jsonify
+from flask_cors import CORS
+from datetime import datetime
+import logging
+
+app = Flask(__name__)
+CORS(app)
+DATABASE = 'sot_tdm.db'
+port = int(os.environ.get("PORT", 10000))
+
+# Discord credentials
+DISCORD_TOKEN = os.environ.get('DISCORD_TOKEN', '')
+DISCORD_CLIENT_ID = os.environ.get('DISCORD_CLIENT_ID', '')
+DISCORD_PUBLIC_KEY = os.environ.get('DISCORD_PUBLIC_KEY', '')
+
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
+
+# Bot status
+bot_active = False
+
+# Simple ping responses
+PING_RESPONSES = [
+    "I'm here newgen",
+    "Bot is up",
+    "Still alive",
+    "Yeah I'm here",
+    "Online",
+    "Ready",
+    "Here",
+    "Present",
+    "Awake",
+    "Active"
+]
+
+# =============================================================================
+# DISCORD SIGNATURE VERIFICATION
+# =============================================================================
+
+def verify_discord_signature(request):
+    """Verify Discord request signature"""
+    signature = request.headers.get('X-Signature-Ed25519')
+    timestamp = request.headers.get('X-Signature-Timestamp')
+    body = request.get_data().decode('utf-8')
+    
+    if not signature or not timestamp:
+        return False
+    
+    if not DISCORD_PUBLIC_KEY:
+        return False
+    
+    try:
+        import nacl.signing
+        import nacl.exceptions
+        
+        message = f"{timestamp}{body}".encode('utf-8')
+        signature_bytes = bytes.fromhex(signature)
+        verify_key = nacl.signing.VerifyKey(bytes.fromhex(DISCORD_PUBLIC_KEY))
+        verify_key.verify(message, signature_bytes)
+        
+        return True
+        
+    except:
+        return False
+
+# =============================================================================
+# SIMPLE DATABASE
+# =============================================================================
+
+def init_db():
+    """Initialize simple database"""
+    with app.app_context():
+        conn = sqlite3.connect(DATABASE)
+        cursor = conn.cursor()
+        
+        cursor.execute('''
+            CREATE TABLE IF NOT EXISTS users (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                discord_id TEXT UNIQUE,
+                username TEXT,
+                key TEXT UNIQUE,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
+        ''')
+        
+        cursor.execute('''
+            CREATE TABLE IF NOT EXISTS pings (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                user_id TEXT,
+                server_id TEXT,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
+        ''')
+        
+        conn.commit()
+        conn.close()
+        logger.info("✅ Database initialized")
+
+def get_db_connection():
+    """Get database connection"""
+    conn = sqlite3.connect(DATABASE)
+    conn.row_factory = sqlite3.Row
+    return conn
+
+# =============================================================================
+# DISCORD BOT
+# =============================================================================
+
+def test_discord_token():
+    """Test if Discord token is valid"""
+    global bot_active
+    
+    if not DISCORD_TOKEN:
+        return False
+    
+    try:
+        url = "https://discord.com/api/v10/users/@me"
+        headers = {"Authorization": f"Bot {DISCORD_TOKEN}"}
+        response = requests.get(url, headers=headers, timeout=10)
+        
+        if response.status_code == 200:
+            bot_active = True
+            return True
+        return False
+            
+    except:
+        return False
+
+def register_commands():
+    """Register only ping command"""
+    if not DISCORD_TOKEN or not DISCORD_CLIENT_ID:
+        return False
+    
+    commands = [
+        {
+            "name": "ping",
+            "description": "Check if bot is awake",
+            "type": 1
+        }
+    ]
+    
+    try:
+        url = f"https://discord.com/api/v10/applications/{DISCORD_CLIENT_ID}/commands"
+        headers = {
+            "Authorization": f"Bot {DISCORD_TOKEN}",
+            "Content-Type": "application/json"
+        }
+        
+        response = requests.put(url, headers=headers, json=commands, timeout=10)
+        
+        if response.status_code in [200, 201]:
+            logger.info("✅ Ping command registered")
+            return True
+        return False
+            
+    except:
+        return False
+
+# =============================================================================
+# DISCORD INTERACTIONS
+# =============================================================================
+
+@app.route('/interactions', methods=['POST'])
+def interactions():
+    """Handle Discord interactions"""
+    if not verify_discord_signature(request):
+        return jsonify({"error": "Invalid signature"}), 401
+    
+    data = request.get_json()
+    
+    # Handle Discord verification ping
+    if data.get('type') == 1:
+        return jsonify({"type": 1})
+    
+    # Handle slash commands
+    if data.get('type') == 2:
+        command = data.get('data', {}).get('name')
+        user_id = data.get('member', {}).get('user', {}).get('id')
+        server_id = data.get('guild_id')
+        
+        if command == 'ping':
+            # Log the ping
+            if user_id and server_id:
+                conn = get_db_connection()
+                conn.execute('INSERT INTO pings (user_id, server_id) VALUES (?, ?)', (user_id, server_id))
+                conn.commit()
+                conn.close()
+            
+            response = random.choice(PING_RESPONSES)
+            return jsonify({
+                "type": 4,
+                "data": {
+                    "content": response,
+                    "flags": 0
+                }
+            })
+    
+    return jsonify({"type": 4, "data": {"content": "Unknown", "flags": 64}})
+
+# =============================================================================
+# SIMPLE ANIMATED WEB INTERFACE
+# =============================================================================
+
+@app.route('/')
+def home():
+    """Simple animated web page"""
+    return '''
+    <!DOCTYPE html>
+    <html>
+    <head>
+        <title>Goblin Bot</title>
+        <meta charset="UTF-8">
+        <meta name="viewport" content="width=device-width, initial-scale=1.0">
+        <style>
+            * {
+                margin: 0;
+                padding: 0;
+                box-sizing: border-box;
+            }
+            
+            body {
+                font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+                background: #000;
+                color: #fff;
+                min-height: 100vh;
+                overflow: hidden;
+                position: relative;
+            }
+            
+            /* Background animation */
+            .bg-animation {
+                position: fixed;
+                top: 0;
+                left: 0;
+                width: 100%;
+                height: 100%;
+                z-index: -1;
+            }
+            
+            .dot {
+                position: absolute;
+                background: #00ff00;
+                border-radius: 50%;
+                animation: float 20s infinite linear;
+            }
+            
+            @keyframes float {
+                0% {
+                    transform: translate(0, 0) rotate(0deg);
+                    opacity: 0;
+                }
+                10% {
+                    opacity: 1;
+                }
+                90% {
+                    opacity: 1;
+                }
+                100% {
+                    transform: translate(calc(100vw * var(--tx)), calc(100vh * var(--ty))) rotate(360deg);
+                    opacity: 0;
+                }
+            }
+            
+            /* Main container */
+            .container {
+                max-width: 800px;
+                margin: 0 auto;
+                padding: 40px 20px;
+                text-align: center;
+                position: relative;
+                z-index: 1;
+            }
+            
+            /* Logo/Header animation */
+            .logo {
+                font-size: 4rem;
+                font-weight: 900;
+                margin-bottom: 20px;
+                background: linear-gradient(45deg, #00ff00, #00cc00, #009900);
+                -webkit-background-clip: text;
+                -webkit-text-fill-color: transparent;
+                background-size: 200% 200%;
+                animation: gradient 3s ease infinite;
+                text-shadow: 0 0 30px rgba(0, 255, 0, 0.3);
+            }
+            
+            @keyframes gradient {
+                0% { background-position: 0% 50%; }
+                50% { background-position: 100% 50%; }
+                100% { background-position: 0% 50%; }
+            }
+            
+            .subtitle {
+                font-size: 1.2rem;
+                color: #888;
+                margin-bottom: 40px;
+                animation: fadeIn 2s;
+            }
+            
+            @keyframes fadeIn {
+                from { opacity: 0; transform: translateY(20px); }
+                to { opacity: 1; transform: translateY(0); }
+            }
+            
+            /* Stats cards */
+            .stats {
+                display: flex;
+                justify-content: center;
+                gap: 20px;
+                margin-bottom: 50px;
+                flex-wrap: wrap;
+            }
+            
+            .stat-card {
+                background: rgba(30, 30, 30, 0.8);
+                padding: 25px;
+                border-radius: 15px;
+                min-width: 180px;
+                border: 1px solid rgba(0, 255, 0, 0.1);
+                transition: all 0.3s;
+                position: relative;
+                overflow: hidden;
+            }
+            
+            .stat-card::before {
+                content: '';
+                position: absolute;
+                top: 0;
+                left: -100%;
+                width: 100%;
+                height: 100%;
+                background: linear-gradient(90deg, transparent, rgba(0, 255, 0, 0.1), transparent);
+                transition: left 0.5s;
+            }
+            
+            .stat-card:hover::before {
+                left: 100%;
+            }
+            
+            .stat-card:hover {
+                transform: translateY(-5px);
+                border-color: rgba(0, 255, 0, 0.3);
+                box-shadow: 0 10px 30px rgba(0, 255, 0, 0.1);
+            }
+            
+            .stat-number {
+                font-size: 2.5rem;
+                font-weight: bold;
+                color: #00ff00;
+                margin-bottom: 10px;
+            }
+            
+            .stat-label {
+                color: #888;
+                font-size: 0.9rem;
+                text-transform: uppercase;
+                letter-spacing: 1px;
+            }
+            
+            /* Action buttons */
+            .actions {
+                display: flex;
+                justify-content: center;
+                gap: 15px;
+                margin-bottom: 50px;
+                flex-wrap: wrap;
+            }
+            
+            .btn {
+                padding: 15px 30px;
+                background: rgba(0, 255, 0, 0.1);
+                border: 2px solid #00ff00;
+                color: #00ff00;
+                border-radius: 10px;
+                font-size: 1rem;
+                font-weight: bold;
+                cursor: pointer;
+                transition: all 0.3s;
+                text-decoration: none;
+                display: inline-flex;
+                align-items: center;
+                justify-content: center;
+                gap: 10px;
+                position: relative;
+                overflow: hidden;
+            }
+            
+            .btn::before {
+                content: '';
+                position: absolute;
+                top: 0;
+                left: -100%;
+                width: 100%;
+                height: 100%;
+                background: linear-gradient(90deg, transparent, rgba(0, 255, 0, 0.2), transparent);
+                transition: left 0.5s;
+            }
+            
+            .btn:hover::before {
+                left: 100%;
+            }
+            
+            .btn:hover {
+                background: rgba(0, 255, 0, 0.2);
+                transform: translateY(-3px);
+                box-shadow: 0 10px 20px rgba(0, 255, 0, 0.2);
+            }
+            
+            .btn:active {
+                transform: translateY(-1px);
+            }
+            
+            /* Ping animation */
+            .ping-container {
+                margin: 40px auto;
+                max-width: 400px;
+            }
+            
+            .ping-btn {
+                width: 100%;
+                padding: 20px;
+                font-size: 1.2rem;
+                background: rgba(0, 255, 0, 0.2);
+                border: 2px solid #00ff00;
+                border-radius: 10px;
+                color: #fff;
+                cursor: pointer;
+                transition: all 0.3s;
+                position: relative;
+                overflow: hidden;
+            }
+            
+            .ping-btn:hover {
+                background: rgba(0, 255, 0, 0.3);
+                transform: scale(1.05);
+            }
+            
+            .ping-wave {
+                position: absolute;
+                border: 2px solid #00ff00;
+                border-radius: 50%;
+                animation: wave 1s linear;
+                pointer-events: none;
+            }
+            
+            @keyframes wave {
+                0% {
+                    width: 0;
+                    height: 0;
+                    opacity: 1;
+                    top: 50%;
+                    left: 50%;
+                    transform: translate(-50%, -50%);
+                }
+                100% {
+                    width: 400px;
+                    height: 400px;
+                    opacity: 0;
+                    top: 50%;
+                    left: 50%;
+                    transform: translate(-50%, -50%);
+                }
+            }
+            
+            /* Response display */
+            .response {
+                margin-top: 30px;
+                padding: 20px;
+                background: rgba(30, 30, 30, 0.8);
+                border-radius: 10px;
+                border-left: 4px solid #00ff00;
+                display: none;
+                animation: slideIn 0.5s;
+                position: relative;
+            }
+            
+            @keyframes slideIn {
+                from {
+                    opacity: 0;
+                    transform: translateY(20px);
+                }
+                to {
+                    opacity: 1;
+                    transform: translateY(0);
+                }
+            }
+            
+            .response::before {
+                content: "💬";
+                position: absolute;
+                top: -15px;
+                left: 20px;
+                background: #000;
+                padding: 0 10px;
+                font-size: 1.5rem;
+            }
+            
+            /* Footer */
+            footer {
+                margin-top: 60px;
+                padding-top: 20px;
+                border-top: 1px solid rgba(255, 255, 255, 0.1);
+                color: #666;
+                font-size: 0.9rem;
+            }
+            
+            .status {
+                display: inline-block;
+                width: 10px;
+                height: 10px;
+                border-radius: 50%;
+                background: #ff0000;
+                margin-right: 10px;
+                animation: pulse 2s infinite;
+            }
+            
+            .status.online {
+                background: #00ff00;
+            }
+            
+            @keyframes pulse {
+                0%, 100% { opacity: 1; }
+                50% { opacity: 0.5; }
+            }
+            
+            /* Code display */
+            .code {
+                background: rgba(0, 0, 0, 0.5);
+                padding: 15px;
+                border-radius: 8px;
+                font-family: monospace;
+                margin: 20px 0;
+                border: 1px solid rgba(0, 255, 0, 0.2);
+                text-align: left;
+                overflow-x: auto;
+            }
+            
+            /* Loading animation */
+            .loader {
+                display: inline-block;
+                width: 20px;
+                height: 20px;
+                border: 2px solid rgba(0, 255, 0, 0.3);
+                border-radius: 50%;
+                border-top-color: #00ff00;
+                animation: spin 1s linear infinite;
+            }
+            
+            @keyframes spin {
+                to { transform: rotate(360deg); }
+            }
+            
+            /* Mobile responsiveness */
+            @media (max-width: 768px) {
+                .logo { font-size: 2.5rem; }
+                .stats { flex-direction: column; align-items: center; }
+                .stat-card { width: 100%; max-width: 300px; }
+                .actions { flex-direction: column; align-items: center; }
+                .btn { width: 100%; max-width: 300px; }
+            }
+        </style>
+    </head>
+    <body>
+        <!-- Background animation -->
+        <div class="bg-animation" id="bgAnimation"></div>
+        
+        <div class="container">
+            <!-- Logo/Header -->
+            <div class="logo">GOBLIN</div>
+            <div class="subtitle">Simple bot with animated interface</div>
+            
+            <!-- Stats -->
+            <div class="stats">
+                <div class="stat-card">
+                    <div class="stat-number" id="totalPings">0</div>
+                    <div class="stat-label">Total Pings</div>
+                </div>
+                <div class="stat-card">
+                    <div class="stat-number" id="botStatus">OFF</div>
+                    <div class="stat-label">Bot Status</div>
+                </div>
+                <div class="stat-card">
+                    <div class="stat-number" id="uptime">0d</div>
+                    <div class="stat-label">Uptime</div>
+                </div>
+            </div>
+            
+            <!-- Actions -->
+            <div class="actions">
+                <button class="btn" onclick="testBot()">
+                    🤖 Test Bot
+                </button>
+                <button class="btn" onclick="showEndpoint()">
+                    🔗 Endpoint
+                </button>
+                <button class="btn" onclick="inviteBot()">
+                    ➕ Invite Bot
+                </button>
+                <a href="/health" class="btn" target="_blank">
+                    📊 Health
+                </a>
+            </div>
+            
+            <!-- Ping section -->
+            <div class="ping-container">
+                <button class="ping-btn" onclick="sendPing()">
+                    🏓 PING THE BOT
+                </button>
+                <div class="response" id="pingResponse"></div>
+            </div>
+            
+            <!-- Endpoint info (hidden by default) -->
+            <div class="response" id="endpointInfo" style="display: none;">
+                <h3>🔗 Interactions Endpoint</h3>
+                <div class="code" id="endpointUrl">Loading...</div>
+                <p style="margin-top: 10px; color: #888; font-size: 0.9rem;">
+                    Copy this URL to Discord Developer Portal → Interactions Endpoint URL
+                </p>
+            </div>
+            
+            <!-- Footer -->
+            <footer>
+                <div style="margin-bottom: 10px;">
+                    <span class="status" id="statusIndicator"></span>
+                    <span id="statusText">Checking status...</span>
+                </div>
+                <div>
+                    Use <code>/ping</code> in Discord to wake up the bot • Simple and clean
+                </div>
+                <div style="margin-top: 10px; color: #444;">
+                    Made with minimal animations
+                </div>
+            </footer>
+        </div>
+        
+        <script>
+            let startTime = Date.now();
+            let pingCount = 0;
+            
+            // Initialize background animation
+            function initBackground() {
+                const container = document.getElementById('bgAnimation');
+                for (let i = 0; i < 50; i++) {
+                    const dot = document.createElement('div');
+                    dot.className = 'dot';
+                    dot.style.width = dot.style.height = Math.random() * 4 + 1 + 'px';
+                    dot.style.left = Math.random() * 100 + '%';
+                    dot.style.top = Math.random() * 100 + '%';
+                    dot.style.opacity = Math.random() * 0.5 + 0.1;
+                    dot.style.setProperty('--tx', Math.random() * 2 - 1);
+                    dot.style.setProperty('--ty', Math.random() * 2 - 1);
+                    dot.style.animationDelay = Math.random() * 5 + 's';
+                    dot.style.animationDuration = Math.random() * 10 + 10 + 's';
+                    container.appendChild(dot);
+                }
+            }
+            
+            // Update uptime
+            function updateUptime() {
+                const now = Date.now();
+                const diff = now - startTime;
+                const days = Math.floor(diff / (1000 * 60 * 60 * 24));
+                const hours = Math.floor((diff % (1000 * 60 * 60 * 24)) / (1000 * 60 * 60));
+                const minutes = Math.floor((diff % (1000 * 60 * 60)) / (1000 * 60));
+                
+                let uptimeText = '';
+                if (days > 0) uptimeText += days + 'd ';
+                if (hours > 0) uptimeText += hours + 'h ';
+                uptimeText += minutes + 'm';
+                
+                document.getElementById('uptime').textContent = uptimeText;
+            }
+            
+            // Send ping
+            function sendPing() {
+                const btn = document.querySelector('.ping-btn');
+                const response = document.getElementById('pingResponse');
+                
+                // Create wave effect
+                const wave = document.createElement('div');
+                wave.className = 'ping-wave';
+                btn.parentNode.appendChild(wave);
+                
+                // Remove wave after animation
+                setTimeout(() => {
+                    wave.remove();
+                }, 1000);
+                
+                // Show loading
+                response.innerHTML = '<div class="loader"></div> Loading...';
+                response.style.display = 'block';
+                
+                // Simulate ping response (in real app, this would call your API)
+                setTimeout(() => {
+                    const responses = [
+                        "I'm here newgen",
+                        "Bot is up",
+                        "Still alive",
+                        "Yeah I'm here",
+                        "Online",
+                        "Ready",
+                        "Here",
+                        "Present",
+                        "Awake",
+                        "Active"
+                    ];
+                    
+                    const randomResponse = responses[Math.floor(Math.random() * responses.length)];
+                    response.innerHTML = `<strong>${randomResponse}</strong>`;
+                    
+                    // Update ping count
+                    pingCount++;
+                    document.getElementById('totalPings').textContent = pingCount;
+                    
+                    // Hide response after 3 seconds
+                    setTimeout(() => {
+                        response.style.display = 'none';
+                    }, 3000);
+                }, 800);
+            }
+            
+            // Test bot connection
+            async function testBot() {
+                const statusIndicator = document.getElementById('statusIndicator');
+                const statusText = document.getElementById('statusText');
+                const botStatus = document.getElementById('botStatus');
+                
+                statusIndicator.className = 'status';
+                statusText.textContent = 'Checking...';
+                
+                try {
+                    const response = await fetch('/health');
+                    const data = await response.json();
+                    
+                    if (data.status === 'healthy') {
+                        statusIndicator.className = 'status online';
+                        statusText.textContent = '✅ Bot is connected';
+                        botStatus.textContent = 'ON';
+                        botStatus.style.color = '#00ff00';
+                    } else {
+                        statusIndicator.className = 'status';
+                        statusText.textContent = '❌ Bot not connected';
+                        botStatus.textContent = 'OFF';
+                        botStatus.style.color = '#ff0000';
+                    }
+                } catch (error) {
+                    statusIndicator.className = 'status';
+                    statusText.textContent = '❌ Connection error';
+                    botStatus.textContent = 'ERR';
+                    botStatus.style.color = '#ff9900';
+                }
+            }
+            
+            // Show endpoint URL
+            function showEndpoint() {
+                const endpointInfo = document.getElementById('endpointInfo');
+                const endpointUrl = document.getElementById('endpointUrl');
+                
+                endpointUrl.textContent = window.location.origin + '/interactions';
+                
+                if (endpointInfo.style.display === 'none') {
+                    endpointInfo.style.display = 'block';
+                } else {
+                    endpointInfo.style.display = 'none';
+                }
+            }
+            
+            // Invite bot
+            function inviteBot() {
+                alert('In a real implementation, this would open the Discord bot invite link.');
+                // window.open('https://discord.com/api/oauth2/authorize?client_id=YOUR_CLIENT_ID&scope=bot%20applications.commands', '_blank');
+            }
+            
+            // Load stats
+            async function loadStats() {
+                try {
+                    const response = await fetch('/api/stats');
+                    const data = await response.json();
+                    
+                    if (data.total_pings !== undefined) {
+                        pingCount = data.total_pings;
+                        document.getElementById('totalPings').textContent = pingCount;
+                    }
+                } catch (error) {
+                    // Use random demo data
+                    pingCount = Math.floor(Math.random() * 100) + 50;
+                    document.getElementById('totalPings').textContent = pingCount;
+                }
+            }
+            
+            // Initialize
+            document.addEventListener('DOMContentLoaded', function() {
+                initBackground();
+                loadStats();
+                testBot();
+                updateUptime();
+                
+                // Update uptime every minute
+                setInterval(updateUptime, 60000);
+                
+                // Update stats every 30 seconds
+                setInterval(loadStats, 30000);
+                
+                // Randomly trigger animations
+                setInterval(() => {
+                    if (Math.random() > 0.7) {
+                        const stats = document.querySelectorAll('.stat-card');
+                        const randomStat = stats[Math.floor(Math.random() * stats.length)];
+                        randomStat.style.transform = 'translateY(-5px)';
+                        setTimeout(() => {
+                            randomStat.style.transform = '';
+                        }, 300);
+                    }
+                }, 5000);
+            });
+        </script>
+    </body>
+    </html>
+    '''
+
+# =============================================================================
+# API ENDPOINTS
+# =============================================================================
+
+@app.route('/api/stats')
+def api_stats():
+    """Get simple stats"""
+    conn = get_db_connection()
+    
+    total_pings = conn.execute('SELECT COUNT(*) as count FROM pings').fetchone()['count']
+    
+    conn.close()
+    
+    return jsonify({
+        "total_pings": total_pings,
+        "bot_active": bot_active,
+        "timestamp": datetime.utcnow().isoformat()
+    })
+
+@app.route('/health')
+def health():
+    """Health check"""
+    return jsonify({
+        "status": "healthy" if bot_active else "offline",
+        "service": "Simple Goblin Bot",
+        "bot": "active" if bot_active else "inactive",
+        "timestamp": datetime.utcnow().isoformat(),
+        "simple": True
+    })
+
+# =============================================================================
+# STARTUP
+# =============================================================================
+
+if __name__ == '__main__':
+    # Initialize database
+    init_db()
+    
+    print(f"\n{'='*60}")
+    print("🤖 SIMPLE GOBLIN BOT")
+    print(f"{'='*60}")
+    
+    # Test Discord connection
+    if test_discord_token():
+        bot_active = True
+        print("✅ Bot token valid")
+        
+        if register_commands():
+            print("✅ Ping command registered")
+        else:
+            print("⚠️ Could not register commands")
+    else:
+        print("❌ Discord token not set or invalid")
+        print("   Set DISCORD_TOKEN, DISCORD_CLIENT_ID, DISCORD_PUBLIC_KEY")
+    
+    print(f"\n🌐 Web Interface: http://localhost:{port}")
+    print(f"🔗 Interactions: http://localhost:{port}/interactions")
+    print(f"📊 Health Check: http://localhost:{port}/health")
+    
+    print(f"\n🎮 Discord Command:")
+    print(f"   /ping - Simple response to wake up bot")
+    
+    print(f"\n⚙️ Simple setup:")
+    print(f"   1. Set environment variables")
+    print(f"   2. Deploy to Render")
+    print(f"   3. Set interactions endpoint in Discord")
+    print(f"   4. Use /ping in Discord")
+    
+    print(f"\n💡 Responses are simple: 'I'm here newgen', 'Bot is up', etc.")
+    print(f"{'='*60}\n")
+    
+    # Start server
+    app.run(host='0.0.0.0', port=port, debug=False)# app.py - TOXIC GOBLIN REGISTRY (Multi-Server Ready)
 import os
 import json
 import sqlite3
