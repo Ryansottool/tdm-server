@@ -1,4 +1,350 @@
-# app.py - Sea of Thieves TDM Server
+# tdm_server.py - Enhanced TDM Server with Discord Webhooks
+from flask import Flask, request, jsonify, render_template_string
+from flask_cors import CORS
+import json
+import time
+import random
+import string
+import threading
+from datetime import datetime
+import logging
+import requests
+
+# Configure logging
+logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
+logger = logging.getLogger(__name__)
+
+app = Flask(__name__)
+CORS(app)
+
+# Discord Webhook Configuration
+DISCORD_WEBHOOK_URL = None  # Set via API
+SCORE_UPDATE_CHANNEL = None  # Discord channel ID for score updates
+
+class DiscordManager:
+    def __init__(self):
+        self.webhook_url = None
+        self.score_channel = None
+        
+    def send_score_update(self, room_data, kill_data=None):
+        """Send score update to Discord"""
+        if not self.webhook_url:
+            return
+            
+        try:
+            if kill_data:
+                # Kill update
+                embed = {
+                    "title": "🎯 KILL REGISTERED",
+                    "description": f"**{kill_data['killer']}** eliminated **{kill_data['victim']}**",
+                    "color": 0xff0000,
+                    "fields": [
+                        {"name": "Room", "value": room_data['room_name'], "inline": True},
+                        {"name": "Score", "value": f"Team 1: {room_data['scores']['team1']} - Team 2: {room_data['scores']['team2']}", "inline": True},
+                        {"name": "Game Mode", "value": room_data['game_mode'], "inline": True}
+                    ],
+                    "timestamp": datetime.now().isoformat()
+                }
+            else:
+                # Match start/end update
+                embed = {
+                    "title": "⚔️ MATCH UPDATE",
+                    "description": f"**{room_data['room_name']}**",
+                    "color": 0x00ff00,
+                    "fields": [
+                        {"name": "Status", "value": "STARTED" if room_data['game_active'] else "ENDED", "inline": True},
+                        {"name": "Score", "value": f"Team 1: {room_data['scores']['team1']} - Team 2: {room_data['scores']['team2']}", "inline": True},
+                        {"name": "Players", "value": f"{len(room_data['players'])}/{room_data['max_players']}", "inline": True}
+                    ],
+                    "timestamp": datetime.now().isoformat()
+                }
+            
+            data = {
+                "embeds": [embed],
+                "username": "TDM Score Tracker",
+                "avatar_url": "https://i.imgur.com/4Z3Q7vL.png"  # Optional: Add custom avatar
+            }
+            
+            response = requests.post(self.webhook_url, json=data, timeout=5)
+            if response.status_code not in [200, 204]:
+                logger.error(f"Failed to send Discord webhook: {response.status_code}")
+                
+        except Exception as e:
+            logger.error(f"Discord webhook error: {e}")
+            
+    def send_match_summary(self, match_data):
+        """Send final match summary to Discord"""
+        if not self.webhook_url:
+            return
+            
+        try:
+            winner_text = "Draw" if match_data['winner'] == 'draw' else f"Team {match_data['winner'][-1]} Wins!"
+            
+            embed = {
+                "title": "🏆 MATCH COMPLETE",
+                "description": f"**{match_data['room_name']}**",
+                "color": 0xffd700,
+                "fields": [
+                    {"name": "Final Score", "value": f"Team 1: **{match_data['team1_score']}** - Team 2: **{match_data['team2_score']}**", "inline": False},
+                    {"name": "Winner", "value": winner_text, "inline": True},
+                    {"name": "Duration", "value": f"{match_data['duration']}s", "inline": True},
+                    {"name": "Total Kills", "value": str(match_data['kill_count']), "inline": True},
+                    {"name": "Team 1 Players", "value": ", ".join(match_data['team1_players']) or "None", "inline": False},
+                    {"name": "Team 2 Players", "value": ", ".join(match_data['team2_players']) or "None", "inline": False}
+                ],
+                "footer": {"text": f"Room Code: {match_data['room_code']}"},
+                "timestamp": datetime.now().isoformat()
+            }
+            
+            data = {
+                "embeds": [embed],
+                "username": "TDM Match Reporter",
+                "avatar_url": "https://i.imgur.com/4Z3Q7vL.png"
+            }
+            
+            response = requests.post(self.webhook_url, json=data, timeout=5)
+            if response.status_code not in [200, 204]:
+                logger.error(f"Failed to send match summary: {response.status_code}")
+                
+        except Exception as e:
+            logger.error(f"Match summary error: {e}")
+
+discord_manager = DiscordManager()
+
+class TDMGameState:
+    def __init__(self):
+        self.rooms = {}
+        self.leaderboard = {}
+        self.past_matches = []
+        self.create_24h_room()
+        
+    def create_24h_room(self):
+        """Create always-available room"""
+        room_code = "24HOURS"
+        self.rooms[room_code] = {
+            'room_code': room_code,
+            'room_name': '24/7 TDM Channel',
+            'game_mode': '2v2',
+            'max_players': 4,
+            'host_name': 'System',
+            'teams': {"team1": [], "team2": [], "spectators": []},
+            'scores': {"team1": 0, "team2": 0},
+            'game_active': False,
+            'kill_feed': [],
+            'players': [],
+            'created_time': time.time(),
+            'last_activity': time.time(),
+            'is_24h_channel': True
+        }
+        
+    def add_past_match(self, room_data):
+        """Add completed match to history"""
+        match_data = {
+            'room_code': room_data['room_code'],
+            'room_name': room_data['room_name'],
+            'team1_score': room_data['scores']['team1'],
+            'team2_score': room_data['scores']['team2'],
+            'team1_players': room_data['teams']['team1'].copy(),
+            'team2_players': room_data['teams']['team2'].copy(),
+            'winner': 'team1' if room_data['scores']['team1'] > room_data['scores']['team2'] else 'team2' if room_data['scores']['team2'] > room_data['scores']['team1'] else 'draw',
+            'duration': int(time.time() - room_data.get('match_start_time', time.time())),
+            'kill_count': len(room_data.get('kill_feed', [])),
+            'timestamp': time.time()
+        }
+        self.past_matches.append(match_data)
+        
+        # Send to Discord
+        discord_manager.send_match_summary(match_data)
+
+game_state = TDMGameState()
+
+def generate_room_code():
+    """Generate unique room code"""
+    return ''.join(random.choices(string.ascii_uppercase + string.digits, k=6))
+
+# API Routes
+@app.route('/api/set_discord', methods=['POST'])
+def set_discord_config():
+    """Set Discord webhook URL"""
+    data = request.get_json()
+    webhook_url = data.get('webhook_url')
+    
+    if webhook_url:
+        discord_manager.webhook_url = webhook_url
+        logger.info(f"Discord webhook set: {webhook_url[:30]}...")
+        return jsonify({'status': 'success', 'message': 'Discord webhook configured'})
+    
+    return jsonify({'status': 'error', 'message': 'Invalid webhook URL'})
+
+@app.route('/api/create_room', methods=['POST'])
+def create_room():
+    """Create a new TDM room"""
+    data = request.get_json()
+    room_code = generate_room_code()
+    
+    game_state.rooms[room_code] = {
+        'room_code': room_code,
+        'room_name': data.get('room_name', 'TDM Room'),
+        'game_mode': data.get('game_mode', '2v2'),
+        'max_players': 4 if data.get('game_mode') == '2v2' else 2,
+        'host_name': data.get('host_name', 'Unknown'),
+        'teams': {"team1": [], "team2": [], "spectators": []},
+        'scores': {"team1": 0, "team2": 0},
+        'game_active': False,
+        'kill_feed': [],
+        'players': [],
+        'created_time': time.time(),
+        'last_activity': time.time(),
+        'is_24h_channel': False
+    }
+    
+    logger.info(f"Room created: {room_code}")
+    return jsonify({'status': 'success', 'room_code': room_code})
+
+@app.route('/api/join_room', methods=['POST'])
+def join_room():
+    """Join an existing room"""
+    data = request.get_json()
+    room_code = data.get('room_code', '').upper()
+    player_name = data.get('player_name')
+    team = data.get('team', 'spectators')
+    
+    if room_code not in game_state.rooms:
+        return jsonify({'status': 'error', 'message': 'Room not found'})
+    
+    room = game_state.rooms[room_code]
+    
+    if player_name in room['players']:
+        return jsonify({'status': 'error', 'message': 'Already in room'})
+    
+    # Add player
+    room['players'].append(player_name)
+    room['teams'][team].append(player_name)
+    room['last_activity'] = time.time()
+    
+    logger.info(f"Player {player_name} joined {room_code} as {team}")
+    return jsonify({'status': 'success', 'room_data': room})
+
+@app.route('/api/report_kill', methods=['POST'])
+def report_kill():
+    """Report a kill"""
+    data = request.get_json()
+    room_code = data.get('room_code', '').upper()
+    killer = data.get('killer')
+    victim = data.get('victim')
+    
+    if room_code not in game_state.rooms:
+        return jsonify({'status': 'error', 'message': 'Room not found'})
+    
+    room = game_state.rooms[room_code]
+    
+    # Add to kill feed
+    kill_entry = {
+        'killer': killer,
+        'victim': victim,
+        'timestamp': time.time()
+    }
+    room['kill_feed'].append(kill_entry)
+    
+    # Update scores
+    killer_team = None
+    for team, players in room['teams'].items():
+        if killer in players:
+            killer_team = team
+            break
+    
+    if killer_team and killer_team in ['team1', 'team2']:
+        room['scores'][killer_team] += 1
+    
+    room['last_activity'] = time.time()
+    
+    # Send to Discord
+    discord_manager.send_score_update(room, kill_entry)
+    
+    logger.info(f"Kill: {killer} -> {victim} in {room_code}")
+    return jsonify({'status': 'success', 'scores': room['scores']})
+
+@app.route('/api/start_match', methods=['POST'])
+def start_match():
+    """Start a match"""
+    data = request.get_json()
+    room_code = data.get('room_code', '').upper()
+    
+    if room_code not in game_state.rooms:
+        return jsonify({'status': 'error', 'message': 'Room not found'})
+    
+    room = game_state.rooms[room_code]
+    room['game_active'] = True
+    room['scores'] = {"team1": 0, "team2": 0}
+    room['kill_feed'] = []
+    room['match_start_time'] = time.time()
+    room['last_activity'] = time.time()
+    
+    # Send to Discord
+    discord_manager.send_score_update(room)
+    
+    logger.info(f"Match started in {room_code}")
+    return jsonify({'status': 'success', 'message': 'Match started'})
+
+@app.route('/api/end_match', methods=['POST'])
+def end_match():
+    """End a match"""
+    data = request.get_json()
+    room_code = data.get('room_code', '').upper()
+    
+    if room_code not in game_state.rooms:
+        return jsonify({'status': 'error', 'message': 'Room not found'})
+    
+    room = game_state.rooms[room_code]
+    room['game_active'] = False
+    
+    # Add to past matches
+    if sum(room['scores'].values()) > 0:
+        game_state.add_past_match(room)
+    
+    logger.info(f"Match ended in {room_code}")
+    return jsonify({'status': 'success', 'message': 'Match ended'})
+
+@app.route('/api/get_rooms', methods=['GET'])
+def get_rooms():
+    """Get all active rooms"""
+    rooms_list = []
+    for code, room in game_state.rooms.items():
+        rooms_list.append({
+            'room_code': code,
+            'room_name': room['room_name'],
+            'game_mode': room['game_mode'],
+            'player_count': len(room['players']),
+            'max_players': room['max_players'],
+            'game_active': room['game_active'],
+            'scores': room['scores']
+        })
+    
+    return jsonify({'status': 'success', 'rooms': rooms_list})
+
+@app.route('/api/get_room/<room_code>', methods=['GET'])
+def get_room(room_code):
+    """Get specific room data"""
+    room_code = room_code.upper()
+    if room_code in game_state.rooms:
+        return jsonify({'status': 'success', 'room': game_state.rooms[room_code]})
+    return jsonify({'status': 'error', 'message': 'Room not found'})
+
+@app.route('/api/stats', methods=['GET'])
+def get_stats():
+    """Get server statistics"""
+    stats = {
+        'total_rooms': len(game_state.rooms),
+        'active_matches': sum(1 for r in game_state.rooms.values() if r['game_active']),
+        'total_players': sum(len(r['players']) for r in game_state.rooms.values()),
+        'total_kills': sum(len(r['kill_feed']) for r in game_state.rooms.values()),
+        'total_matches': len(game_state.past_matches)
+    }
+    return jsonify({'status': 'success', 'stats': stats})
+
+if __name__ == '__main__':
+    logger.info("🎮 Starting TDM Server with Discord integration")
+    app.run(host='0.0.0.0', port=5000, debug=False, threaded=True)# app.py - Sea of Thieves TDM Server
 from flask import Flask, request, jsonify, render_template_string
 from flask_cors import CORS
 import json
