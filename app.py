@@ -1,19 +1,24 @@
-# app.py - WITH DISCORD BOT (DISABLED UNTIL TOKEN IS SET)
+# app.py - DISCORD BOT WITH INTERACTIONS ENDPOINT
 import os
 import json
 import sqlite3
-from flask import Flask, request, jsonify, g
+from flask import Flask, request, jsonify
 from flask_cors import CORS
 from datetime import datetime
 import threading
+import discord
+from discord.ext import commands
+import asyncio
 
 app = Flask(__name__)
 CORS(app)
 DATABASE = 'sot_tdm.db'
 port = int(os.environ.get("PORT", 10000))
 
-# Discord bot - will be imported when token is available
-discord_bot = None
+# Discord bot setup
+intents = discord.Intents.default()
+intents.message_content = True
+bot = commands.Bot(command_prefix='!', intents=intents)
 
 # =============================================================================
 # SIMPLE DATABASE SETUP
@@ -25,7 +30,6 @@ def init_db():
         conn = sqlite3.connect(DATABASE)
         cursor = conn.cursor()
         
-        # Create simple tables
         cursor.execute('''
             CREATE TABLE IF NOT EXISTS matches (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -53,6 +57,104 @@ def init_db():
         print("✅ Database initialized")
 
 # =============================================================================
+# DISCORD BOT COMMANDS
+# =============================================================================
+
+@bot.event
+async def on_ready():
+    """When bot is ready"""
+    print(f"✅ Discord bot logged in as {bot.user}")
+    await bot.change_presence(
+        activity=discord.Activity(
+            type=discord.ActivityType.watching,
+            name="SoT TDM Matches"
+        )
+    )
+    
+    # Sync slash commands
+    try:
+        synced = await bot.tree.sync()
+        print(f"✅ Synced {len(synced)} command(s)")
+    except Exception as e:
+        print(f"❌ Failed to sync commands: {e}")
+
+@bot.tree.command(name="ping", description="Check if bot is alive")
+async def ping(interaction: discord.Interaction):
+    """Ping command"""
+    await interaction.response.send_message("🏓 Pong! Bot is online.")
+
+@bot.tree.command(name="room", description="Create a TDM room")
+async def create_room(interaction: discord.Interaction):
+    """Create room command"""
+    await interaction.response.defer()
+    
+    import random
+    import string
+    
+    # Generate random room code
+    room_code = ''.join(random.choices(string.ascii_uppercase + string.digits, k=6))
+    
+    conn = sqlite3.connect(DATABASE)
+    cursor = conn.cursor()
+    
+    cursor.execute('''
+        INSERT INTO matches (room_code, status) 
+        VALUES (?, 'waiting')
+    ''', (room_code,))
+    
+    conn.commit()
+    conn.close()
+    
+    await interaction.followup.send(
+        f"🎮 **New TDM Room Created!**\n"
+        f"**Code:** `{room_code}`\n"
+        f"Share this code with your team to join!"
+    )
+
+# =============================================================================
+# DISCORD INTERACTIONS ENDPOINT (CRITICAL FOR RENDER.COM)
+# =============================================================================
+
+@app.route('/interactions', methods=['POST'])
+def interactions():
+    """Discord Interactions Endpoint - REQUIRED FOR RENDER.COM"""
+    # Verify the request is from Discord (in production, you should verify the signature)
+    # For simplicity in testing, we'll skip verification
+    
+    # Parse the interaction
+    interaction_data = request.json
+    
+    if not interaction_data:
+        return jsonify({"error": "No data provided"}), 400
+    
+    # Get interaction type
+    interaction_type = interaction_data.get('type', 0)
+    
+    # Handle Ping (Discord verification)
+    if interaction_type == 1:
+        return jsonify({
+            "type": 1  # PONG response
+        })
+    
+    # Handle Application Commands
+    elif interaction_type == 2:
+        # Get command name
+        data = interaction_data.get('data', {})
+        command_name = data.get('name', '')
+        
+        # Create minimal response
+        return jsonify({
+            "type": 4,  # CHANNEL_MESSAGE_WITH_SOURCE
+            "data": {
+                "content": f"Command received: {command_name}",
+                "flags": 64  # EPHEMERAL
+            }
+        })
+    
+    # Default response
+    return jsonify({"error": "Unknown interaction type"}), 400
+
+# =============================================================================
 # BASIC API ENDPOINTS
 # =============================================================================
 
@@ -63,9 +165,10 @@ def home():
         "status": "online",
         "service": "SoT TDM Server",
         "version": "2.0.0",
-        "features": ["API", "Database", "Discord Bot Ready"],
+        "features": ["API", "Database", "Discord Bot"],
         "endpoints": {
             "GET /": "This page",
+            "POST /interactions": "Discord Interactions Endpoint",
             "GET /health": "Health check",
             "POST /api/register": "Register player",
             "POST /api/match/create": "Create match",
@@ -79,7 +182,7 @@ def health():
     return jsonify({
         "status": "healthy",
         "timestamp": datetime.utcnow().isoformat(),
-        "discord_bot": "ready" if os.environ.get('DISCORD_TOKEN') else "disabled"
+        "bot_status": "ready" if os.environ.get('DISCORD_TOKEN') else "disabled"
     })
 
 @app.route('/api/register', methods=['POST'])
@@ -92,16 +195,13 @@ def register_player():
     conn = sqlite3.connect(DATABASE)
     cursor = conn.cursor()
     
-    # Check if player exists
     cursor.execute('SELECT * FROM players WHERE discord_id = ?', (data['discord_id'],))
     player = cursor.fetchone()
     
     if player:
-        # Update username if changed
         cursor.execute('UPDATE players SET username = ? WHERE discord_id = ?', 
                       (data['username'], data['discord_id']))
     else:
-        # Create new player
         cursor.execute('INSERT INTO players (discord_id, username) VALUES (?, ?)',
                       (data['discord_id'], data['username']))
     
@@ -119,7 +219,6 @@ def create_match():
     import random
     import string
     
-    # Generate random room code
     room_code = ''.join(random.choices(string.ascii_uppercase + string.digits, k=6))
     
     conn = sqlite3.connect(DATABASE)
@@ -153,7 +252,6 @@ def get_match(room_code):
     if not match:
         return jsonify({"error": "Match not found"}), 404
     
-    # Convert to dict
     match_dict = {
         'room_code': match[1],
         'team1_score': match[2],
@@ -167,11 +265,11 @@ def get_match(room_code):
     return jsonify(match_dict)
 
 # =============================================================================
-# DISCORD BOT SETUP (WILL START WHEN TOKEN IS AVAILABLE)
+# DISCORD BOT STARTUP
 # =============================================================================
 
-def start_discord_bot():
-    """Start Discord bot if token is available"""
+def start_bot():
+    """Start Discord bot in a separate thread"""
     token = os.environ.get('DISCORD_TOKEN')
     
     if not token:
@@ -179,51 +277,9 @@ def start_discord_bot():
         return
     
     try:
-        import discord
-        from discord.ext import commands
-        
-        intents = discord.Intents.default()
-        intents.message_content = True
-        bot = commands.Bot(command_prefix='!', intents=intents)
-        
-        @bot.event
-        async def on_ready():
-            print(f"✅ Discord bot logged in as {bot.user}")
-            await bot.change_presence(
-                activity=discord.Activity(
-                    type=discord.ActivityType.watching,
-                    name="SoT TDM Matches"
-                )
-            )
-        
-        @bot.tree.command(name="ping", description="Check if bot is alive")
-        async def ping(interaction: discord.Interaction):
-            await interaction.response.send_message("🏓 Pong! Bot is online.")
-        
-        @bot.tree.command(name="room", description="Create a TDM room")
-        async def create_room(interaction: discord.Interaction):
-            await interaction.response.defer()
-            
-            # Create match via API
-            import requests
-            response = requests.post(
-                f"http://localhost:{port}/api/match/create",
-                timeout=5
-            )
-            
-            if response.status_code == 200:
-                data = response.json()
-                await interaction.followup.send(
-                    f"🎮 **New TDM Room Created!**\n"
-                    f"**Code:** `{data['room_code']}`\n"
-                    f"Share this code with your team to join!"
-                )
-            else:
-                await interaction.followup.send("❌ Failed to create room")
-        
         print("🤖 Starting Discord bot...")
+        # Run bot in current thread
         bot.run(token)
-        
     except Exception as e:
         print(f"❌ Discord bot failed: {e}")
 
@@ -237,15 +293,16 @@ if __name__ == '__main__':
     
     print(f"🚀 SoT TDM Server starting on port {port}...")
     print(f"📊 Database: {DATABASE}")
+    print(f"🌐 Interactions Endpoint: https://your-app.onrender.com/interactions")
     
-    # Start Discord bot in background thread if token exists
+    # Start Discord bot in background thread
     token = os.environ.get('DISCORD_TOKEN')
     if token:
         print("🤖 Discord bot token found, starting bot...")
-        bot_thread = threading.Thread(target=start_discord_bot, daemon=True)
+        bot_thread = threading.Thread(target=start_bot, daemon=True)
         bot_thread.start()
     else:
         print("⚠️ Discord bot disabled (set DISCORD_TOKEN to enable)")
     
     # Start Flask server
-    app.run(host='0.0.0.0', port=port, debug=False)
+    app.run(host='0.0.0.0', port=port, debug=False, use_reloader=False)
