@@ -1,6 +1,30 @@
-# Server Requirements
+# Core Dependencies
+Python>=3.9,<3.12
+
+# Flask Web Server
 Flask==2.3.3
 Flask-CORS==4.0.0
+
+# Discord Bot
 discord.py==2.3.2
 aiohttp==3.8.5
+
+# HUD Client Dependencies (PyQt5 + Game Integration)
+PyQt5==5.15.9
+PyQt5-sip==12.12.1
+keyboard==0.13.5
+pywin32==306
 requests==2.31.0
+Pillow==10.1.0  # For image handling
+
+# Database (SQLite is built-in, but for SQLAlchemy if needed later)
+# sqlalchemy==2.0.23  # Optional for future
+
+# Development/Testing (Optional)
+pytest==7.4.3
+pytest-asyncio==0.21.1
+python-dotenv==1.0.0  # For local environment variables
+
+# Utility Libraries
+colorama==0.4.6  # Colored terminal output
+python-dateutil==2.8.2  # Date parsing
