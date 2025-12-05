@@ -1,350 +1,4 @@
-# tdm_server.py - Enhanced TDM Server with Discord Webhooks
-from flask import Flask, request, jsonify, render_template_string
-from flask_cors import CORS
-import json
-import time
-import random
-import string
-import threading
-from datetime import datetime
-import logging
-import requests
-
-# Configure logging
-logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
-logger = logging.getLogger(__name__)
-
-app = Flask(__name__)
-CORS(app)
-
-# Discord Webhook Configuration
-DISCORD_WEBHOOK_URL = None  # Set via API
-SCORE_UPDATE_CHANNEL = None  # Discord channel ID for score updates
-
-class DiscordManager:
-    def __init__(self):
-        self.webhook_url = None
-        self.score_channel = None
-        
-    def send_score_update(self, room_data, kill_data=None):
-        """Send score update to Discord"""
-        if not self.webhook_url:
-            return
-            
-        try:
-            if kill_data:
-                # Kill update
-                embed = {
-                    "title": "🎯 KILL REGISTERED",
-                    "description": f"**{kill_data['killer']}** eliminated **{kill_data['victim']}**",
-                    "color": 0xff0000,
-                    "fields": [
-                        {"name": "Room", "value": room_data['room_name'], "inline": True},
-                        {"name": "Score", "value": f"Team 1: {room_data['scores']['team1']} - Team 2: {room_data['scores']['team2']}", "inline": True},
-                        {"name": "Game Mode", "value": room_data['game_mode'], "inline": True}
-                    ],
-                    "timestamp": datetime.now().isoformat()
-                }
-            else:
-                # Match start/end update
-                embed = {
-                    "title": "⚔️ MATCH UPDATE",
-                    "description": f"**{room_data['room_name']}**",
-                    "color": 0x00ff00,
-                    "fields": [
-                        {"name": "Status", "value": "STARTED" if room_data['game_active'] else "ENDED", "inline": True},
-                        {"name": "Score", "value": f"Team 1: {room_data['scores']['team1']} - Team 2: {room_data['scores']['team2']}", "inline": True},
-                        {"name": "Players", "value": f"{len(room_data['players'])}/{room_data['max_players']}", "inline": True}
-                    ],
-                    "timestamp": datetime.now().isoformat()
-                }
-            
-            data = {
-                "embeds": [embed],
-                "username": "TDM Score Tracker",
-                "avatar_url": "https://i.imgur.com/4Z3Q7vL.png"  # Optional: Add custom avatar
-            }
-            
-            response = requests.post(self.webhook_url, json=data, timeout=5)
-            if response.status_code not in [200, 204]:
-                logger.error(f"Failed to send Discord webhook: {response.status_code}")
-                
-        except Exception as e:
-            logger.error(f"Discord webhook error: {e}")
-            
-    def send_match_summary(self, match_data):
-        """Send final match summary to Discord"""
-        if not self.webhook_url:
-            return
-            
-        try:
-            winner_text = "Draw" if match_data['winner'] == 'draw' else f"Team {match_data['winner'][-1]} Wins!"
-            
-            embed = {
-                "title": "🏆 MATCH COMPLETE",
-                "description": f"**{match_data['room_name']}**",
-                "color": 0xffd700,
-                "fields": [
-                    {"name": "Final Score", "value": f"Team 1: **{match_data['team1_score']}** - Team 2: **{match_data['team2_score']}**", "inline": False},
-                    {"name": "Winner", "value": winner_text, "inline": True},
-                    {"name": "Duration", "value": f"{match_data['duration']}s", "inline": True},
-                    {"name": "Total Kills", "value": str(match_data['kill_count']), "inline": True},
-                    {"name": "Team 1 Players", "value": ", ".join(match_data['team1_players']) or "None", "inline": False},
-                    {"name": "Team 2 Players", "value": ", ".join(match_data['team2_players']) or "None", "inline": False}
-                ],
-                "footer": {"text": f"Room Code: {match_data['room_code']}"},
-                "timestamp": datetime.now().isoformat()
-            }
-            
-            data = {
-                "embeds": [embed],
-                "username": "TDM Match Reporter",
-                "avatar_url": "https://i.imgur.com/4Z3Q7vL.png"
-            }
-            
-            response = requests.post(self.webhook_url, json=data, timeout=5)
-            if response.status_code not in [200, 204]:
-                logger.error(f"Failed to send match summary: {response.status_code}")
-                
-        except Exception as e:
-            logger.error(f"Match summary error: {e}")
-
-discord_manager = DiscordManager()
-
-class TDMGameState:
-    def __init__(self):
-        self.rooms = {}
-        self.leaderboard = {}
-        self.past_matches = []
-        self.create_24h_room()
-        
-    def create_24h_room(self):
-        """Create always-available room"""
-        room_code = "24HOURS"
-        self.rooms[room_code] = {
-            'room_code': room_code,
-            'room_name': '24/7 TDM Channel',
-            'game_mode': '2v2',
-            'max_players': 4,
-            'host_name': 'System',
-            'teams': {"team1": [], "team2": [], "spectators": []},
-            'scores': {"team1": 0, "team2": 0},
-            'game_active': False,
-            'kill_feed': [],
-            'players': [],
-            'created_time': time.time(),
-            'last_activity': time.time(),
-            'is_24h_channel': True
-        }
-        
-    def add_past_match(self, room_data):
-        """Add completed match to history"""
-        match_data = {
-            'room_code': room_data['room_code'],
-            'room_name': room_data['room_name'],
-            'team1_score': room_data['scores']['team1'],
-            'team2_score': room_data['scores']['team2'],
-            'team1_players': room_data['teams']['team1'].copy(),
-            'team2_players': room_data['teams']['team2'].copy(),
-            'winner': 'team1' if room_data['scores']['team1'] > room_data['scores']['team2'] else 'team2' if room_data['scores']['team2'] > room_data['scores']['team1'] else 'draw',
-            'duration': int(time.time() - room_data.get('match_start_time', time.time())),
-            'kill_count': len(room_data.get('kill_feed', [])),
-            'timestamp': time.time()
-        }
-        self.past_matches.append(match_data)
-        
-        # Send to Discord
-        discord_manager.send_match_summary(match_data)
-
-game_state = TDMGameState()
-
-def generate_room_code():
-    """Generate unique room code"""
-    return ''.join(random.choices(string.ascii_uppercase + string.digits, k=6))
-
-# API Routes
-@app.route('/api/set_discord', methods=['POST'])
-def set_discord_config():
-    """Set Discord webhook URL"""
-    data = request.get_json()
-    webhook_url = data.get('webhook_url')
-    
-    if webhook_url:
-        discord_manager.webhook_url = webhook_url
-        logger.info(f"Discord webhook set: {webhook_url[:30]}...")
-        return jsonify({'status': 'success', 'message': 'Discord webhook configured'})
-    
-    return jsonify({'status': 'error', 'message': 'Invalid webhook URL'})
-
-@app.route('/api/create_room', methods=['POST'])
-def create_room():
-    """Create a new TDM room"""
-    data = request.get_json()
-    room_code = generate_room_code()
-    
-    game_state.rooms[room_code] = {
-        'room_code': room_code,
-        'room_name': data.get('room_name', 'TDM Room'),
-        'game_mode': data.get('game_mode', '2v2'),
-        'max_players': 4 if data.get('game_mode') == '2v2' else 2,
-        'host_name': data.get('host_name', 'Unknown'),
-        'teams': {"team1": [], "team2": [], "spectators": []},
-        'scores': {"team1": 0, "team2": 0},
-        'game_active': False,
-        'kill_feed': [],
-        'players': [],
-        'created_time': time.time(),
-        'last_activity': time.time(),
-        'is_24h_channel': False
-    }
-    
-    logger.info(f"Room created: {room_code}")
-    return jsonify({'status': 'success', 'room_code': room_code})
-
-@app.route('/api/join_room', methods=['POST'])
-def join_room():
-    """Join an existing room"""
-    data = request.get_json()
-    room_code = data.get('room_code', '').upper()
-    player_name = data.get('player_name')
-    team = data.get('team', 'spectators')
-    
-    if room_code not in game_state.rooms:
-        return jsonify({'status': 'error', 'message': 'Room not found'})
-    
-    room = game_state.rooms[room_code]
-    
-    if player_name in room['players']:
-        return jsonify({'status': 'error', 'message': 'Already in room'})
-    
-    # Add player
-    room['players'].append(player_name)
-    room['teams'][team].append(player_name)
-    room['last_activity'] = time.time()
-    
-    logger.info(f"Player {player_name} joined {room_code} as {team}")
-    return jsonify({'status': 'success', 'room_data': room})
-
-@app.route('/api/report_kill', methods=['POST'])
-def report_kill():
-    """Report a kill"""
-    data = request.get_json()
-    room_code = data.get('room_code', '').upper()
-    killer = data.get('killer')
-    victim = data.get('victim')
-    
-    if room_code not in game_state.rooms:
-        return jsonify({'status': 'error', 'message': 'Room not found'})
-    
-    room = game_state.rooms[room_code]
-    
-    # Add to kill feed
-    kill_entry = {
-        'killer': killer,
-        'victim': victim,
-        'timestamp': time.time()
-    }
-    room['kill_feed'].append(kill_entry)
-    
-    # Update scores
-    killer_team = None
-    for team, players in room['teams'].items():
-        if killer in players:
-            killer_team = team
-            break
-    
-    if killer_team and killer_team in ['team1', 'team2']:
-        room['scores'][killer_team] += 1
-    
-    room['last_activity'] = time.time()
-    
-    # Send to Discord
-    discord_manager.send_score_update(room, kill_entry)
-    
-    logger.info(f"Kill: {killer} -> {victim} in {room_code}")
-    return jsonify({'status': 'success', 'scores': room['scores']})
-
-@app.route('/api/start_match', methods=['POST'])
-def start_match():
-    """Start a match"""
-    data = request.get_json()
-    room_code = data.get('room_code', '').upper()
-    
-    if room_code not in game_state.rooms:
-        return jsonify({'status': 'error', 'message': 'Room not found'})
-    
-    room = game_state.rooms[room_code]
-    room['game_active'] = True
-    room['scores'] = {"team1": 0, "team2": 0}
-    room['kill_feed'] = []
-    room['match_start_time'] = time.time()
-    room['last_activity'] = time.time()
-    
-    # Send to Discord
-    discord_manager.send_score_update(room)
-    
-    logger.info(f"Match started in {room_code}")
-    return jsonify({'status': 'success', 'message': 'Match started'})
-
-@app.route('/api/end_match', methods=['POST'])
-def end_match():
-    """End a match"""
-    data = request.get_json()
-    room_code = data.get('room_code', '').upper()
-    
-    if room_code not in game_state.rooms:
-        return jsonify({'status': 'error', 'message': 'Room not found'})
-    
-    room = game_state.rooms[room_code]
-    room['game_active'] = False
-    
-    # Add to past matches
-    if sum(room['scores'].values()) > 0:
-        game_state.add_past_match(room)
-    
-    logger.info(f"Match ended in {room_code}")
-    return jsonify({'status': 'success', 'message': 'Match ended'})
-
-@app.route('/api/get_rooms', methods=['GET'])
-def get_rooms():
-    """Get all active rooms"""
-    rooms_list = []
-    for code, room in game_state.rooms.items():
-        rooms_list.append({
-            'room_code': code,
-            'room_name': room['room_name'],
-            'game_mode': room['game_mode'],
-            'player_count': len(room['players']),
-            'max_players': room['max_players'],
-            'game_active': room['game_active'],
-            'scores': room['scores']
-        })
-    
-    return jsonify({'status': 'success', 'rooms': rooms_list})
-
-@app.route('/api/get_room/<room_code>', methods=['GET'])
-def get_room(room_code):
-    """Get specific room data"""
-    room_code = room_code.upper()
-    if room_code in game_state.rooms:
-        return jsonify({'status': 'success', 'room': game_state.rooms[room_code]})
-    return jsonify({'status': 'error', 'message': 'Room not found'})
-
-@app.route('/api/stats', methods=['GET'])
-def get_stats():
-    """Get server statistics"""
-    stats = {
-        'total_rooms': len(game_state.rooms),
-        'active_matches': sum(1 for r in game_state.rooms.values() if r['game_active']),
-        'total_players': sum(len(r['players']) for r in game_state.rooms.values()),
-        'total_kills': sum(len(r['kill_feed']) for r in game_state.rooms.values()),
-        'total_matches': len(game_state.past_matches)
-    }
-    return jsonify({'status': 'success', 'stats': stats})
-
-if __name__ == '__main__':
-    logger.info("🎮 Starting TDM Server with Discord integration")
-    app.run(host='0.0.0.0', port=5000, debug=False, threaded=True)# app.py - Sea of Thieves TDM Server
+# app.py - Sea of Thieves TDM Server with Discord Bot
 from flask import Flask, request, jsonify, render_template_string
 from flask_cors import CORS
 import json
@@ -356,6 +10,9 @@ from datetime import datetime
 import logging
 import base64
 import hashlib
+import discord
+from discord.ext import commands, tasks
+import asyncio
 
 # Configure logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
@@ -364,494 +21,354 @@ logger = logging.getLogger(__name__)
 app = Flask(__name__)
 CORS(app, origins=["*"], methods=["GET", "POST", "OPTIONS"], allow_headers=["Content-Type", "Authorization"])
 
-class KillDetectionSystem:
+# Discord Bot Configuration
+DISCORD_BOT_TOKEN = None  # Set via environment variable or API
+discord_bot = None
+discord_channel = None
+
+class DiscordBotManager:
     def __init__(self):
-        self.pending_kills = {}
-        self.kill_cooldown = 3.0
-        self.last_kill_times = {}
-    
-    def detect_kill_event(self, room_code, killer_name, victim_name):
-        """Server-side kill detection with validation"""
-        current_time = time.time()
+        self.bot = None
+        self.channel = None
+        self.is_ready = False
+        self.queue = []
+        self.running = False
         
-        # Check cooldown for this killer
-        killer_key = f"{room_code}:{killer_name}"
-        if killer_key in self.last_kill_times:
-            if current_time - self.last_kill_times[killer_key] < self.kill_cooldown:
-                return False, "Kill report on cooldown"
-        
-        # Validate players exist in room
-        if room_code not in game_state.rooms:
-            return False, "Room not found"
-            
-        room = game_state.rooms[room_code]
-        
-        # Verify both players are in the room and on different teams
-        killer_team = None
-        victim_team = None
-        
-        for team, players in room['teams'].items():
-            if killer_name in players:
-                killer_team = team
-            if victim_name in players:
-                victim_team = team
-        
-        if not killer_team or not victim_team:
-            return False, "Players not found in room"
-            
-        if killer_team == victim_team:
-            return False, "Cannot kill teammate"
-        
-        # Check if game is active
-        if not room.get('game_active', False):
-            return False, "Game is not active"
-        
-        # Record kill
-        self.last_kill_times[killer_key] = current_time
-        
-        # Add to kill feed
-        kill_entry = {
-            'killer': killer_name,
-            'victim': victim_name,
-            'timestamp': current_time,
-            'room_code': room_code
-        }
-        room['kill_feed'].append(kill_entry)
-        
-        # Update scores
-        if killer_team in ['team1', 'team2']:
-            room['scores'][killer_team] += 1
-        
-        # Update leaderboard
-        game_state.update_leaderboard(room)
-        
-        # Log activity
-        game_state.add_recent_activity('Kill', 
-                                     f'{killer_name} → {victim_name} (+1 {killer_team})', 
-                                     room_code)
-        
-        logger.info(f"🎯 Kill registered: {killer_name} → {victim_name} in {room_code}")
-        
-        return True, "Kill registered successfully"
-
-class DeathVerificationSystem:
-    def __init__(self):
-        self.pending_verifications = {}
-        self.verification_timeout = 30
-        self.last_cleanup = time.time()
-    
-    def verify_death_screenshot(self, room_code, player_name, screenshot_data):
-        """Verify death screenshot and register kill"""
-        # Validate room and player
-        if room_code not in game_state.rooms:
-            return False, "Room not found"
-            
-        room = game_state.rooms[room_code]
-        
-        if player_name not in room['players']:
-            return False, "Player not in room"
-        
-        try:
-            # Basic screenshot validation
-            if not screenshot_data or len(screenshot_data) < 100:
-                return False, "Invalid screenshot data"
-            
-            # For deployment, we'll accept valid screenshots and determine killer
-            killer = self.determine_killer(room_code, player_name)
-            
-            if killer:
-                # Register the kill
-                success, message = kill_detector.detect_kill_event(room_code, killer, player_name)
-                
-                if success:
-                    game_state.add_recent_activity('Death Verified', 
-                                                 f'{player_name} death confirmed → {killer}', 
-                                                 room_code)
-                    logger.info(f"📸 Death verified via screenshot: {player_name} killed by {killer}")
-                    return True, f"Death verified! {killer} eliminated {player_name}"
-                else:
-                    return False, f"Kill registration failed: {message}"
-            else:
-                return False, "Could not determine killer"
-                
-        except Exception as e:
-            logger.error(f"Screenshot verification error: {e}")
-            return False, f"Screenshot processing error: {str(e)}"
-    
-    def determine_killer(self, room_code, victim_name):
-        """Determine who likely killed the player"""
-        if room_code not in game_state.rooms:
-            return "Unknown"
-            
-        room = game_state.rooms[room_code]
-        
-        # Simple logic: find players on opposite teams
-        victim_team = None
-        for team, players in room['teams'].items():
-            if victim_name in players:
-                victim_team = team
-                break
-        
-        if not victim_team:
-            return "Unknown"
-        
-        # Find potential killers from opposite teams
-        potential_killers = []
-        for team, players in room['teams'].items():
-            if team != victim_team and team in ['team1', 'team2']:
-                potential_killers.extend(players)
-        
-        if potential_killers:
-            # Return random killer from opposite team (in real implementation, track damage)
-            return random.choice(potential_killers)
-        
-        return "Unknown"
-
-class TDMGameState:
-    def __init__(self):
-        self.rooms = {}
-        self.cleanup_interval = 30
-        self.always_active_room = None
-        self.leaderboard = {}
-        self.past_matches = []
-        self.recent_activity = []
-        self.player_sessions = {}
-        self.total_matches_played = 0
-        self.total_kills = 0
-        self.last_cleanup_time = time.time()
-        self.cleanup_stats = {
-            'rooms_cleaned': 0,
-            'players_cleaned': 0,
-            'last_cleanup_duration': 0,
-            'total_cleanups': 0
-        }
-        self.server_start_time = time.time()
-
-    def cleanup_inactive_rooms(self):
-        """Cleanup inactive rooms"""
-        start_time = time.time()
-        current_time = time.time()
-        inactive_rooms = []
-        players_cleaned = 0
-        
-        logger.info(f"🔄 Cleanup cycle - {len(self.rooms)} rooms to check")
-
-        for room_code, room_data in list(self.rooms.items()):
-            # Skip always-active room
-            if room_code == self.always_active_room:
-                continue
-                
-            last_activity = room_data.get('last_activity', 0)
-            created_time = room_data.get('created_time', 0)
-            game_active = room_data.get('game_active', False)
-            players_count = len(room_data.get('players', []))
-            room_age = current_time - created_time
-            inactivity_duration = current_time - last_activity
-
-            # Cleanup conditions
-            condition1 = inactivity_duration > 1800  # 30 minutes inactivity
-            condition2 = (not game_active and room_age > 600 and players_count <= 1)  # 10 minutes for empty rooms
-            condition3 = players_count == 0 and inactivity_duration > 300  # 5 minutes for completely empty rooms
-            condition4 = room_age > 7200  # 2 hours maximum room age
-            condition5 = (game_active and inactivity_duration > 900 and players_count < 2)  # Abandoned games
-
-            if any([condition1, condition2, condition3, condition4, condition5]):
-                players_cleaned += players_count
-                inactive_rooms.append(room_code)
-                
-                # Determine cleanup reason for logging
-                reason = "inactivity" if condition1 else \
-                        "empty room" if condition2 else \
-                        "completely empty" if condition3 else \
-                        "max age reached" if condition4 else \
-                        "abandoned game"
-                
-                logger.info(f"🗑️ Marking room {room_code} for cleanup: {reason}")
-                self.add_recent_activity('Room Cleanup', f'Room {room_code} cleaned up ({reason})', room_code)
-
-        # Remove inactive rooms
-        for room_code in inactive_rooms:
-            if room_code in self.rooms:
-                room_data = self.rooms[room_code]
-                # Add to past matches if game was active with scores
-                if room_data.get('game_active', False) and sum(room_data['scores'].values()) > 0:
-                    self.add_past_match(room_data)
-                del self.rooms[room_code]
-                logger.info(f"✅ Removed room: {room_code}")
-
-        # Cleanup player sessions (remove players inactive for more than 1 hour)
-        current_time = time.time()
-        inactive_players = []
-        for player_name, last_seen in list(self.player_sessions.items()):
-            if current_time - last_seen > 3600:  # 1 hour
-                inactive_players.append(player_name)
-        
-        for player_name in inactive_players:
-            del self.player_sessions[player_name]
-
-        # Cleanup old past matches (keep only last 100)
-        if len(self.past_matches) > 100:
-            removed_count = len(self.past_matches) - 100
-            self.past_matches = self.past_matches[-100:]
-            logger.info(f"📊 Cleaned up {removed_count} old matches")
-
-        # Cleanup old activity (keep only last 50)
-        if len(self.recent_activity) > 50:
-            removed_activities = len(self.recent_activity) - 50
-            self.recent_activity = self.recent_activity[-50:]
-            logger.info(f"📈 Cleaned up {removed_activities} old activities")
-
-        # Update cleanup stats
-        cleanup_duration = time.time() - start_time
-        self.cleanup_stats = {
-            'rooms_cleaned': len(inactive_rooms),
-            'players_cleaned': players_cleaned,
-            'last_cleanup_duration': cleanup_duration,
-            'total_cleanups': self.cleanup_stats['total_cleanups'] + 1,
-            'total_rooms': len(self.rooms),
-            'total_players': self.get_online_players(),
-            'timestamp': current_time
-        }
-        
-        self.last_cleanup_time = current_time
-        
-        logger.info(f"🎯 Cleanup completed: {len(inactive_rooms)} rooms, {players_cleaned} players in {cleanup_duration:.3f}s")
-
-    def create_always_active_room(self):
-        """Create the 24/7 always active room"""
-        room_code = "24HOURS"
-        if room_code not in self.rooms:
-            self.rooms[room_code] = {
-                'room_code': room_code,
-                'room_name': '24/7 TDM Channel',
-                'game_mode': '2v2',
-                'max_players': 4,
-                'host_name': 'System',
-                'password': '',
-                'has_password': False,
-                'teams': {"team1": [], "team2": [], "spectators": []},
-                'scores': {"team1": 0, "team2": 0},
-                'game_active': False,
-                'kill_feed': [],
-                'pending_kills': [],
-                'spectator_confirm_required': False,
-                'created_time': time.time(),
-                'last_activity': time.time(),
-                'players': [],
-                'player_last_active': {},
-                'is_24h_channel': True,
-                'description': 'Always available for practice and casual matches'
-            }
-            self.always_active_room = room_code
-            self.add_recent_activity('System', '24/7 TDM Channel created - Always available for matches!')
-            logger.info("🌐 24/7 TDM Channel created successfully")
-
-    def update_player_activity(self, player_name, room_code=None):
-        """Update player activity with room context"""
-        self.player_sessions[player_name] = time.time()
-        
-        # Also update room-specific activity
-        if room_code and room_code in self.rooms:
-            self.rooms[room_code]['player_last_active'][player_name] = time.time()
-            self.rooms[room_code]['last_activity'] = time.time()
-
-    def get_online_players(self):
-        """Get online player count"""
-        current_time = time.time()
-        online_count = 0
-        
-        for room_code, room_data in self.rooms.items():
-            # Count only players active in last 5 minutes
-            active_players = 0
-            
-            # Check room-specific activity
-            for player_name, last_active in room_data.get('player_last_active', {}).items():
-                if current_time - last_active < 300:  # 5 minutes
-                    active_players += 1
-            
-            # Also check global player sessions as backup
-            room_player_count = len([p for p in room_data.get('players', []) 
-                                   if self.player_sessions.get(p, 0) > current_time - 300])
-            
-            # Use the higher count for accuracy
-            online_count += max(active_players, room_player_count)
-            
-        return online_count
-
-    def get_active_rooms_count(self):
-        """Count only rooms with recent activity or players"""
-        current_time = time.time()
-        active_count = 0
-        
-        for room_code, room_data in self.rooms.items():
-            if room_code == self.always_active_room:
-                continue  # Always count the 24/7 room as active
-                
-            # Room is active if it has players OR recent activity
-            has_players = len(room_data.get('players', [])) > 0
-            recent_activity = current_time - room_data.get('last_activity', 0) < 900  # 15 minutes
-            game_active = room_data.get('game_active', False)
-            
-            if has_players or recent_activity or game_active:
-                active_count += 1
-                
-        return active_count
-
-    def update_leaderboard(self, room_data):
-        """Update leaderboard stats from completed matches"""
-        if not room_data.get('game_active', False):
+    def start_bot(self, token, channel_id=None):
+        """Start Discord bot in a separate thread"""
+        if self.running:
             return
             
-        # Process kill feed for leaderboard updates
-        for kill in room_data.get('kill_feed', []):
-            killer = kill.get('killer')
-            victim = kill.get('victim')
+        self.running = True
+        self.token = token
+        
+        # Start bot in background thread
+        bot_thread = threading.Thread(target=self._run_bot, args=(token, channel_id), daemon=True)
+        bot_thread.start()
+        logger.info("🤖 Discord bot thread started")
+        
+    def _run_bot(self, token, channel_id):
+        """Run Discord bot with asyncio"""
+        intents = discord.Intents.default()
+        intents.message_content = True
+        
+        self.bot = commands.Bot(command_prefix='!', intents=intents)
+        
+        @self.bot.event
+        async def on_ready():
+            logger.info(f"✅ Discord bot logged in as {self.bot.user}")
+            self.is_ready = True
             
-            if killer:
-                # Initialize killer stats if not exists
-                if killer not in self.leaderboard:
-                    self.leaderboard[killer] = {
-                        'player_name': killer,
-                        'wins': 0,
-                        'kills': 0,
-                        'deaths': 0,
-                        'games_played': 0,
-                        'last_seen': time.time(),
-                        'first_seen': time.time(),
-                        'total_score': 0
-                    }
-                self.leaderboard[killer]['kills'] += 1
-                self.leaderboard[killer]['last_seen'] = time.time()
-                self.leaderboard[killer]['total_score'] += 100  # Points per kill
-                self.update_player_activity(killer)
-                self.total_kills += 1
+            # Find channel if ID provided
+            if channel_id:
+                try:
+                    self.channel = self.bot.get_channel(int(channel_id))
+                    if self.channel:
+                        logger.info(f"📢 Discord channel set: #{self.channel.name}")
+                    else:
+                        logger.warning(f"Channel ID {channel_id} not found")
+                except:
+                    logger.error(f"Invalid channel ID: {channel_id}")
             
-            if victim:
-                # Initialize victim stats if not exists
-                if victim not in self.leaderboard:
-                    self.leaderboard[victim] = {
-                        'player_name': victim,
-                        'wins': 0,
-                        'kills': 0,
-                        'deaths': 0,
-                        'games_played': 0,
-                        'last_seen': time.time(),
-                        'first_seen': time.time(),
-                        'total_score': 0
-                    }
-                self.leaderboard[victim]['deaths'] += 1
-                self.leaderboard[victim]['last_seen'] = time.time()
-                self.update_player_activity(victim)
-
-    def add_past_match(self, room_data):
-        """Add completed match to past matches"""
-        if room_data.get('game_active', False) and sum(room_data['scores'].values()) > 0:
-            match_data = {
-                'id': len(self.past_matches) + 1,
-                'room_code': room_data['room_code'],
-                'room_name': room_data['room_name'],
-                'team1_score': room_data['scores']['team1'],
-                'team2_score': room_data['scores']['team2'],
-                'team1_players': room_data['teams']['team1'].copy(),
-                'team2_players': room_data['teams']['team2'].copy(),
-                'timestamp': time.time(),
-                'duration': random.randint(300, 1800),  # 5-30 minutes
-                'game_mode': room_data['game_mode'],
-                'kill_count': len(room_data.get('kill_feed', [])),
-                'total_players': len(room_data.get('players', [])),
-                'host_name': room_data.get('host_name', 'Unknown')
-            }
+            # Process queued messages
+            if self.queue:
+                logger.info(f"Processing {len(self.queue)} queued messages")
+                for embed_data in self.queue:
+                    await self.send_embed(embed_data)
+                self.queue.clear()
+                
+        @self.bot.event
+        async def on_message(message):
+            # Ignore bot's own messages
+            if message.author == self.bot.user:
+                return
             
-            # Determine winner and update stats
-            if room_data['scores']['team1'] > room_data['scores']['team2']:
-                match_data['winner'] = 'team1'
-                match_data['winning_score'] = room_data['scores']['team1']
-                match_data['losing_score'] = room_data['scores']['team2']
-                for player in room_data['teams']['team1']:
-                    if player in self.leaderboard:
-                        self.leaderboard[player]['wins'] += 1
-                        self.leaderboard[player]['games_played'] += 1
-                        self.leaderboard[player]['total_score'] += 500  # Win bonus
-            elif room_data['scores']['team2'] > room_data['scores']['team1']:
-                match_data['winner'] = 'team2'
-                match_data['winning_score'] = room_data['scores']['team2']
-                match_data['losing_score'] = room_data['scores']['team1']
-                for player in room_data['teams']['team2']:
-                    if player in self.leaderboard:
-                        self.leaderboard[player]['wins'] += 1
-                        self.leaderboard[player]['games_played'] += 1
-                        self.leaderboard[player]['total_score'] += 500  # Win bonus
+            # Handle commands
+            if message.content.startswith('!tdm'):
+                await self.handle_tdm_command(message)
+            
+            # Allow other commands to be processed
+            await self.bot.process_commands(message)
+        
+        @self.bot.command(name='stats')
+        async def stats_command(ctx):
+            """Get server statistics"""
+            try:
+                stats = game_state.get_system_stats()
+                
+                embed = discord.Embed(
+                    title="📊 TDM Server Statistics",
+                    color=discord.Color.orange(),
+                    timestamp=datetime.now()
+                )
+                
+                embed.add_field(name="👥 Online Players", value=stats['online_players'], inline=True)
+                embed.add_field(name="🎮 Active Rooms", value=stats['active_rooms'], inline=True)
+                embed.add_field(name="⚔️ Total Matches", value=stats['total_matches'], inline=True)
+                embed.add_field(name="🗡️ Total Kills", value=stats['total_kills'], inline=True)
+                embed.add_field(name="⏱️ Server Uptime", value=stats['server_uptime_formatted'], inline=True)
+                embed.add_field(name="📈 Performance", value=f"{stats['performance_metrics']['cleanup_efficiency']} efficiency", inline=True)
+                
+                await ctx.send(embed=embed)
+                
+            except Exception as e:
+                await ctx.send(f"Error getting stats: {str(e)}")
+        
+        # Run the bot
+        try:
+            loop = asyncio.new_event_loop()
+            asyncio.set_event_loop(loop)
+            self.bot.run(token)
+        except Exception as e:
+            logger.error(f"Discord bot error: {e}")
+            self.running = False
+            
+    async def handle_tdm_command(self, message):
+        """Handle !tdm commands"""
+        command_parts = message.content.split()
+        
+        if len(command_parts) < 2:
+            await message.channel.send(
+                "**TDM Bot Commands:**\n"
+                "`!tdm stats` - Server statistics\n"
+                "`!tdm rooms` - List active rooms\n"
+                "`!tdm leaderboard` - Top players\n"
+                "`!tdm recent` - Recent matches\n"
+                "`!tdm help` - Show this help"
+            )
+            return
+            
+        subcommand = command_parts[1].lower()
+        
+        if subcommand == 'stats':
+            stats = game_state.get_system_stats()
+            
+            embed = discord.Embed(
+                title="📊 TDM Server Statistics",
+                color=discord.Color.green(),
+                description=f"Server running for {stats['server_uptime_formatted']}"
+            )
+            
+            embed.add_field(name="👥 Online Players", value=stats['online_players'], inline=True)
+            embed.add_field(name="🎮 Active Rooms", value=stats['active_rooms'], inline=True)
+            embed.add_field(name="⚔️ Total Matches", value=stats['total_matches'], inline=True)
+            embed.add_field(name="🗡️ Total Kills", value=stats['total_kills'], inline=True)
+            
+            await message.channel.send(embed=embed)
+            
+        elif subcommand == 'rooms':
+            rooms = []
+            for room_code, room in game_state.rooms.items():
+                if not room.get('is_24h_channel', False):
+                    rooms.append(f"**{room['room_name']}** (`{room_code}`) - {len(room['players'])}/{room['max_players']} players")
+            
+            if rooms:
+                embed = discord.Embed(
+                    title="🎮 Active Rooms",
+                    color=discord.Color.blue(),
+                    description="\n".join(rooms[:10])
+                )
+                if len(rooms) > 10:
+                    embed.set_footer(text=f"Showing 10 of {len(rooms)} rooms")
             else:
-                match_data['winner'] = 'draw'
-                match_data['winning_score'] = room_data['scores']['team1']
-                match_data['losing_score'] = room_data['scores']['team2']
-                for player in room_data['teams']['team1'] + room_data['teams']['team2']:
-                    if player in self.leaderboard:
-                        self.leaderboard[player]['games_played'] += 1
-                        self.leaderboard[player]['total_score'] += 250  # Draw bonus
+                embed = discord.Embed(
+                    title="🎮 Active Rooms",
+                    color=discord.Color.orange(),
+                    description="No active rooms at the moment"
+                )
             
-            self.past_matches.append(match_data)
-            self.total_matches_played += 1
+            await message.channel.send(embed=embed)
             
-            self.add_recent_activity('Match Completed', 
-                                   f'{room_data["room_name"]} - Team1: {room_data["scores"]["team1"]} vs Team2: {room_data["scores"]["team2"]}',
-                                   room_data['room_code'])
+        elif subcommand == 'leaderboard':
+            # Get top 10 players
+            leaderboard_data = []
+            for player_name, stats in game_state.leaderboard.items():
+                kd_ratio = stats['kills'] / max(stats['deaths'], 1)
+                leaderboard_data.append({
+                    'player_name': player_name,
+                    'kills': stats.get('kills', 0),
+                    'deaths': stats.get('deaths', 0),
+                    'kd_ratio': kd_ratio,
+                    'wins': stats.get('wins', 0)
+                })
             
-            # Keep only last 100 matches for performance
-            if len(self.past_matches) > 100:
-                self.past_matches.pop(0)
-
-    def add_recent_activity(self, activity_type, description, room_code=None, player_name=None):
-        """Add recent activity entry"""
-        activity = {
-            'id': len(self.recent_activity) + 1,
-            'type': activity_type,
-            'description': description,
-            'timestamp': time.time(),
-            'room_code': room_code,
-            'player_name': player_name,
-            'formatted_time': datetime.now().strftime('%H:%M:%S')
+            leaderboard_data.sort(key=lambda x: x['kills'], reverse=True)
+            
+            description = "**Top 10 Players:**\n"
+            for i, player in enumerate(leaderboard_data[:10], 1):
+                description += f"{i}. **{player['player_name']}** - {player['kills']} kills ({player['kd_ratio']:.2f} K/D)\n"
+            
+            embed = discord.Embed(
+                title="🏆 Leaderboard",
+                color=discord.Color.gold(),
+                description=description
+            )
+            
+            await message.channel.send(embed=embed)
+            
+        elif subcommand == 'recent':
+            recent_matches = game_state.past_matches[-5:]  # Last 5 matches
+            
+            if recent_matches:
+                embed = discord.Embed(
+                    title="📅 Recent Matches",
+                    color=discord.Color.purple()
+                )
+                
+                for match in reversed(recent_matches):
+                    winner_text = "Draw" if match.get('winner') == 'draw' else f"Team {match.get('winner', '')[4:]} Wins!"
+                    embed.add_field(
+                        name=f"{match['room_name']}",
+                        value=f"Score: **{match['team1_score']}** - **{match['team2_score']}**\n"
+                              f"Winner: {winner_text}\n"
+                              f"Kills: {match.get('kill_count', 0)}\n"
+                              f"Mode: {match['game_mode']}",
+                        inline=False
+                    )
+            else:
+                embed = discord.Embed(
+                    title="📅 Recent Matches",
+                    color=discord.Color.orange(),
+                    description="No matches played yet"
+                )
+            
+            await message.channel.send(embed=embed)
+            
+        elif subcommand == 'help':
+            await message.channel.send(
+                "**🤖 TDM Bot Commands:**\n"
+                "```\n"
+                "!tdm stats     - Server statistics\n"
+                "!tdm rooms     - List active rooms\n"
+                "!tdm leaderboard - Top players\n"
+                "!tdm recent    - Recent matches\n"
+                "!tdm help      - Show this help\n"
+                "```\n"
+                "**Need Support?** Create issues on GitHub or join our Discord!"
+            )
+    
+    async def send_embed(self, embed_data):
+        """Send embed message to Discord"""
+        if not self.is_ready or not self.channel:
+            # Queue message for when bot is ready
+            self.queue.append(embed_data)
+            return False
+            
+        try:
+            embed = discord.Embed(
+                title=embed_data.get('title', 'TDM Update'),
+                description=embed_data.get('description', ''),
+                color=embed_data.get('color', discord.Color.orange()),
+                timestamp=datetime.now()
+            )
+            
+            # Add fields
+            for field in embed_data.get('fields', []):
+                embed.add_field(
+                    name=field.get('name', 'Field'),
+                    value=field.get('value', ''),
+                    inline=field.get('inline', True)
+                )
+            
+            # Add footer if provided
+            if 'footer' in embed_data:
+                embed.set_footer(text=embed_data['footer'])
+            
+            # Add thumbnail if provided
+            if 'thumbnail' in embed_data:
+                embed.set_thumbnail(url=embed_data['thumbnail'])
+            
+            await self.channel.send(embed=embed)
+            return True
+            
+        except Exception as e:
+            logger.error(f"Failed to send Discord embed: {e}")
+            return False
+            
+    def send_match_start(self, room_data):
+        """Send match start notification"""
+        embed_data = {
+            'title': '⚔️ MATCH STARTED',
+            'description': f"**{room_data['room_name']}**",
+            'color': 0x00ff00,
+            'fields': [
+                {'name': 'Room Code', 'value': room_data['room_code'], 'inline': True},
+                {'name': 'Game Mode', 'value': room_data['game_mode'], 'inline': True},
+                {'name': 'Players', 'value': f"{len(room_data['players'])}/{room_data['max_players']}", 'inline': True},
+                {'name': 'Team 1', 'value': ', '.join(room_data['teams']['team1']) or 'None', 'inline': False},
+                {'name': 'Team 2', 'value': ', '.join(room_data['teams']['team2']) or 'None', 'inline': False}
+            ],
+            'footer': 'Match starting now!'
         }
-        self.recent_activity.append(activity)
         
-        # Keep only last 50 activities for performance
-        if len(self.recent_activity) > 50:
-            self.recent_activity.pop(0)
-
-    def get_system_stats(self):
-        """Get comprehensive system statistics"""
-        current_time = time.time()
-        server_uptime = current_time - self.server_start_time
+        # Run in background thread
+        threading.Thread(target=self._async_send_embed, args=(embed_data,), daemon=True).start()
         
-        return {
-            'online_players': self.get_online_players(),
-            'active_rooms': self.get_active_rooms_count(),
-            'total_rooms': len(self.rooms),
-            'total_players_tracked': len(self.leaderboard),
-            'total_matches': self.total_matches_played,
-            'total_kills': self.total_kills,
-            'cleanup_stats': self.cleanup_stats,
-            'server_uptime': server_uptime,
-            'server_uptime_formatted': self.format_duration(server_uptime),
-            'last_cleanup': self.last_cleanup_time,
-            'current_time': current_time,
-            'performance_metrics': {
-                'avg_cleanup_time': self.cleanup_stats['last_cleanup_duration'],
-                'cleanup_efficiency': f"{(self.cleanup_stats['rooms_cleaned'] / max(len(self.rooms), 1)) * 100:.1f}%",
-                'memory_usage_estimate': len(self.rooms) * 0.5 + len(self.leaderboard) * 0.1  # KB estimate
-            }
+    def send_kill_notification(self, room_data, kill_data):
+        """Send kill notification"""
+        embed_data = {
+            'title': '🎯 KILL CONFIRMED',
+            'description': f"**{kill_data['killer']}** eliminated **{kill_data['victim']}**",
+            'color': 0xff0000,
+            'fields': [
+                {'name': 'Room', 'value': room_data['room_name'], 'inline': True},
+                {'name': 'Score', 'value': f"Team 1: **{room_data['scores']['team1']}** - Team 2: **{room_data['scores']['team2']}**", 'inline': True},
+                {'name': 'Total Kills', 'value': str(len(room_data['kill_feed'])), 'inline': True}
+            ],
+            'footer': f'Room: {room_data["room_code"]}'
         }
-
-    def format_duration(self, seconds):
-        """Format duration in seconds to human readable format"""
-        if seconds < 60:
-            return f"{int(seconds)}s"
-        elif seconds < 3600:
-            return f"{int(seconds // 60)}m {int(seconds % 60)}s"
-        elif seconds < 86400:
-            return f"{int(seconds // 3600)}h {int((seconds % 3600) // 60)}m"
+        
+        threading.Thread(target=self._async_send_embed, args=(embed_data,), daemon=True).start()
+        
+    def send_match_end(self, match_data):
+        """Send match end summary"""
+        winner_text = "Draw" if match_data['winner'] == 'draw' else f"Team {match_data['winner'][-1]} Wins!"
+        
+        embed_data = {
+            'title': '🏆 MATCH COMPLETE',
+            'description': f"**{match_data['room_name']}**",
+            'color': 0xffd700,
+            'fields': [
+                {'name': 'Final Score', 'value': f"Team 1: **{match_data['team1_score']}** - Team 2: **{match_data['team2_score']}**", 'inline': False},
+                {'name': 'Winner', 'value': winner_text, 'inline': True},
+                {'name': 'Duration', 'value': f"{match_data['duration']}s", 'inline': True},
+                {'name': 'Total Kills', 'value': str(match_data['kill_count']), 'inline': True}
+            ],
+            'footer': f'Room Code: {match_data["room_code"]} • Match ID: {match_data["id"]}'
+        }
+        
+        threading.Thread(target=self._async_send_embed, args=(embed_data,), daemon=True).start()
+        
+    def send_room_created(self, room_data):
+        """Send room created notification"""
+        embed_data = {
+            'title': '🎮 ROOM CREATED',
+            'description': f"New room **{room_data['room_name']}**",
+            'color': 0x0099ff,
+            'fields': [
+                {'name': 'Room Code', 'value': f"`{room_data['room_code']}`", 'inline': True},
+                {'name': 'Host', 'value': room_data['host_name'], 'inline': True},
+                {'name': 'Game Mode', 'value': room_data['game_mode'], 'inline': True},
+                {'name': 'Max Players', 'value': str(room_data['max_players']), 'inline': True}
+            ],
+            'footer': 'Join now to play!'
+        }
+        
+        threading.Thread(target=self._async_send_embed, args=(embed_data,), daemon=True).start()
+        
+    def _async_send_embed(self, embed_data):
+        """Async wrapper for sending embeds"""
+        if self.bot and self.is_ready:
+            asyncio.run_coroutine_threadsafe(self.send_embed(embed_data), self.bot.loop)
         else:
-            return f"{int(seconds // 86400)}d {int((seconds % 86400) // 3600)}h"
+            # Queue for later
+            self.queue.append(embed_data)
+
+# Initialize Discord bot manager
+discord_manager = DiscordBotManager()
+
+# Rest of your existing code (KillDetectionSystem, DeathVerificationSystem, TDMGameState classes)
+# ... [Keep all your existing classes and code] ...
 
 # Initialize global game state and detection systems
 game_state = TDMGameState()
@@ -903,310 +420,52 @@ cleanup_thread.start()
 
 logger.info("🎯 TDM Server started with cleanup system")
 
-def generate_room_code():
-    """Generate a unique room code"""
-    return ''.join(random.choices(string.ascii_uppercase + string.digits, k=6))
-
 # =============================================================================
-# HTML CONTENT
+# NEW DISCORD BOT ENDPOINTS
 # =============================================================================
 
-HTML_CONTENT = '''
-<!DOCTYPE html>
-<html lang="en">
-<head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Sea of Thieves TDM - Global Server</title>
-    <style>
-        * {
-            margin: 0;
-            padding: 0;
-            box-sizing: border-box;
-        }
-
-        :root {
-            --primary-bg: #0a0a0a;
-            --secondary-bg: #1a1a1a;
-            --accent-color: #ff7700;
-            --accent-dark: #cc5500;
-            --accent-light: #ff9933;
-            --text-primary: #e0e0e0;
-            --text-secondary: #a0a0a0;
-            --border-color: #333333;
-            --success-color: #00cc66;
-            --error-color: #cc3333;
-            --warning-color: #ffcc00;
-            --info-color: #0099ff;
-        }
-
-        body {
-            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
-            background: linear-gradient(135deg, var(--primary-bg), #151515, var(--secondary-bg));
-            color: var(--text-primary);
-            min-height: 100vh;
-            line-height: 1.6;
-        }
-
-        .container {
-            max-width: 1200px;
-            margin: 0 auto;
-            padding: 2rem;
-        }
-
-        .header {
-            text-align: center;
-            margin-bottom: 3rem;
-        }
-
-        .header h1 {
-            font-size: 3rem;
-            color: var(--accent-color);
-            margin-bottom: 1rem;
-            text-shadow: 0 0 20px rgba(255, 119, 0, 0.5);
-        }
-
-        .header p {
-            font-size: 1.2rem;
-            color: var(--text-secondary);
-        }
-
-        .stats-grid {
-            display: grid;
-            grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
-            gap: 1.5rem;
-            margin: 3rem 0;
-        }
-
-        .stat-card {
-            background: linear-gradient(135deg, rgba(255, 119, 0, 0.1), rgba(255, 153, 51, 0.05));
-            padding: 2rem;
-            border-radius: 15px;
-            text-align: center;
-            backdrop-filter: blur(10px);
-            border: 1px solid var(--border-color);
-            transition: all 0.3s ease;
-        }
-
-        .stat-card:hover {
-            transform: translateY(-5px);
-            border-color: var(--accent-color);
-            box-shadow: 0 10px 30px rgba(255, 119, 0, 0.2);
-        }
-
-        .stat-number {
-            font-size: 2.5rem;
-            font-weight: bold;
-            color: var(--accent-color);
-            display: block;
-            text-shadow: 0 0 10px rgba(255, 119, 0, 0.3);
-        }
-
-        .stat-label {
-            font-size: 1rem;
-            color: var(--text-secondary);
-            margin-top: 0.5rem;
-        }
-
-        .features {
-            display: grid;
-            grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
-            gap: 2rem;
-            margin: 3rem 0;
-        }
-
-        .feature-card {
-            background: rgba(26, 26, 26, 0.9);
-            padding: 2rem;
-            border-radius: 15px;
-            border: 1px solid var(--border-color);
-        }
-
-        .feature-card h3 {
-            color: var(--accent-color);
-            margin-bottom: 1rem;
-        }
-
-        .status {
-            text-align: center;
-            margin-top: 2rem;
-            padding: 1rem;
-            background: rgba(26, 26, 26, 0.8);
-            border-radius: 8px;
-            border: 1px solid var(--border-color);
-        }
-
-        @media (max-width: 768px) {
-            .container {
-                padding: 1rem;
-            }
-            
-            .header h1 {
-                font-size: 2rem;
-            }
-            
-            .stats-grid {
-                grid-template-columns: 1fr;
-            }
-        }
-    </style>
-</head>
-<body>
-    <div class="container">
-        <div class="header">
-            <h1>⚔️ Sea of Thieves TDM</h1>
-            <p>Global Team Deathmatch Server - Optimized Cleanup System</p>
-        </div>
-
-        <div class="stats-grid">
-            <div class="stat-card">
-                <span class="stat-number" id="online-players">0</span>
-                <span class="stat-label">👥 Online Players</span>
-            </div>
-            <div class="stat-card">
-                <span class="stat-number" id="active-rooms">0</span>
-                <span class="stat-label">🎮 Active Rooms</span>
-            </div>
-            <div class="stat-card">
-                <span class="stat-number" id="total-players">0</span>
-                <span class="stat-label">👤 Total Players</span>
-            </div>
-            <div class="stat-card">
-                <span class="stat-number" id="total-matches">0</span>
-                <span class="stat-label">⚔️ Total Matches</span>
-            </div>
-        </div>
-
-        <div class="features">
-            <div class="feature-card">
-                <h3>🚀 Real-time Tracking</h3>
-                <p>Live player and room tracking with optimized cleanup system</p>
-            </div>
-            <div class="feature-card">
-                <h3>📸 Death Verification</h3>
-                <p>Automatic screenshot verification for anti-cheat protection</p>
-            </div>
-            <div class="feature-card">
-                <h3>🏆 Leaderboards</h3>
-                <p>Global leaderboard with K/D ratios and match statistics</p>
-            </div>
-        </div>
-
-        <div class="status">
-            <p>Server Status: <span style="color: var(--success-color)">✅ Online</span></p>
-            <p>Last Updated: <span id="last-updated">Just now</span></p>
-        </div>
-    </div>
-
-    <script>
-        async function updateStats() {
-            try {
-                const response = await fetch('/stats');
-                const data = await response.json();
-                
-                document.getElementById('online-players').textContent = data.online_players || '0';
-                document.getElementById('active-rooms').textContent = data.active_rooms || '0';
-                document.getElementById('total-players').textContent = data.total_players_tracked || '0';
-                document.getElementById('total-matches').textContent = data.total_matches || '0';
-                
-                // Update timestamp
-                const now = new Date();
-                document.getElementById('last-updated').textContent = now.toLocaleTimeString();
-            } catch (error) {
-                console.error('Error updating stats:', error);
-                document.getElementById('online-players').textContent = '?';
-                document.getElementById('active-rooms').textContent = '?';
-                document.getElementById('total-players').textContent = '?';
-                document.getElementById('total-matches').textContent = '?';
-            }
-        }
-
-        // Update stats every 10 seconds
-        setInterval(updateStats, 10000);
-        updateStats();
-    </script>
-</body>
-</html>
-'''
-
-# =============================================================================
-# FLASK ROUTES AND API HANDLERS
-# =============================================================================
-
-@app.route('/')
-def serve_index():
-    return render_template_string(HTML_CONTENT)
-
-@app.route('/stats')
-def get_stats():
-    stats = game_state.get_system_stats()
-    return jsonify({
-        'online_players': stats['online_players'],
-        'active_rooms': stats['active_rooms'],
-        'total_players_tracked': stats['total_players_tracked'],
-        'total_matches': stats['total_matches'],
-        'total_kills': stats['total_kills']
-    })
-
-@app.route('/system')
-def get_system_stats():
-    stats = game_state.get_system_stats()
-    return jsonify({
-        'total_rooms': stats['total_rooms'],
-        'total_kills': stats['total_kills'],
-        'cleanup_duration': f"{stats['cleanup_stats']['last_cleanup_duration']:.3f}s",
-        'rooms_cleaned': stats['cleanup_stats']['rooms_cleaned'],
-        'players_cleaned': stats['cleanup_stats']['players_cleaned'],
-        'server_uptime': stats['server_uptime'],
-        'server_uptime_formatted': stats['server_uptime_formatted'],
-        'cleanup_stats': stats['cleanup_stats'],
-        'performance_metrics': stats['performance_metrics']
-    })
-
-@app.route('/api', methods=['POST', 'OPTIONS'])
-def api_handler():
-    if request.method == 'OPTIONS':
-        response = jsonify({'status': 'ok'})
-        response.headers.add('Access-Control-Allow-Origin', '*')
-        response.headers.add('Access-Control-Allow-Headers', 'Content-Type,Authorization')
-        response.headers.add('Access-Control-Allow-Methods', 'GET,PUT,POST,DELETE,OPTIONS')
-        return response
-
+@app.route('/api/set_discord_bot', methods=['POST'])
+def set_discord_bot():
+    """Set Discord bot token and channel"""
     try:
         data = request.get_json()
-        if not data:
-            return jsonify({'status': 'error', 'message': 'No JSON data provided'})
-
-        action = data.get('action')
+        token = data.get('bot_token')
+        channel_id = data.get('channel_id')
         
-        # Map actions to handlers
-        handlers = {
-            'create_room': handle_create_room,
-            'join_room': handle_join_room,
-            'get_room_state': handle_get_room_state,
-            'list_rooms': handle_list_rooms,
-            'report_kill': handle_report_kill,
-            'detect_kill': handle_detect_kill,
-            'verify_death': handle_verify_death,
-            'change_team': handle_change_team,
-            'start_game': handle_start_game,
-            'leave_room': handle_leave_room,
-            'get_leaderboard': handle_get_leaderboard,
-            'get_past_scores': handle_get_past_scores,
-            'get_recent_activity': handle_get_recent_activity,
-        }
+        if not token:
+            return jsonify({'status': 'error', 'message': 'Bot token required'})
         
-        handler = handlers.get(action)
-        if handler:
-            return handler(data)
-        else:
-            return jsonify({'status': 'error', 'message': 'Invalid action'})
-
+        # Start Discord bot
+        discord_manager.start_bot(token, channel_id)
+        
+        return jsonify({
+            'status': 'success',
+            'message': 'Discord bot started successfully'
+        })
+        
     except Exception as e:
-        logger.error(f"API error: {e}")
+        logger.error(f"Error setting Discord bot: {e}")
         return jsonify({'status': 'error', 'message': str(e)})
 
-# API Handlers
+@app.route('/api/discord_status', methods=['GET'])
+def discord_status():
+    """Get Discord bot status"""
+    status = {
+        'is_ready': discord_manager.is_ready,
+        'is_running': discord_manager.running,
+        'queue_size': len(discord_manager.queue),
+        'channel_set': discord_manager.channel is not None
+    }
+    
+    return jsonify({
+        'status': 'success',
+        'discord_status': status
+    })
+
+# =============================================================================
+# UPDATED API HANDLERS WITH DISCORD NOTIFICATIONS
+# =============================================================================
+
 def handle_create_room(data):
     room_code = generate_room_code()
     room_name = data.get('room_name', 'TDM Room')
@@ -1235,6 +494,9 @@ def handle_create_room(data):
         'is_24h_channel': False
     }
     
+    # Send Discord notification
+    discord_manager.send_room_created(game_state.rooms[room_code])
+    
     game_state.add_recent_activity('Room Created', f'{room_name} ({room_code})', room_code, host_name)
     logger.info(f"Room created: {room_code} by {host_name}")
     
@@ -1242,78 +504,6 @@ def handle_create_room(data):
         'status': 'success',
         'room_code': room_code,
         'message': f'Room {room_code} created successfully'
-    })
-
-def handle_join_room(data):
-    room_code = data.get('room_code', '').upper()
-    player_name = data.get('player_name', 'Unknown')
-    password = data.get('password', '')
-    
-    if room_code not in game_state.rooms:
-        return jsonify({'status': 'error', 'message': 'Room not found'})
-    
-    room = game_state.rooms[room_code]
-    
-    # Check password
-    if room['has_password'] and room['password'] != password:
-        return jsonify({'status': 'error', 'message': 'Incorrect password'})
-    
-    # Check if player already in room
-    if player_name in room['players']:
-        return jsonify({'status': 'error', 'message': 'Player already in room'})
-    
-    # Add player to spectators initially
-    room['players'].append(player_name)
-    room['teams']['spectators'].append(player_name)
-    room['player_last_active'][player_name] = time.time()
-    room['last_activity'] = time.time()
-    
-    game_state.update_player_activity(player_name, room_code)
-    game_state.add_recent_activity('Player Joined', f'{player_name} joined {room["room_name"]}', room_code, player_name)
-    logger.info(f"Player {player_name} joined room {room_code}")
-    
-    return jsonify({
-        'status': 'success',
-        'room_data': room,
-        'message': f'Joined room {room_code}'
-    })
-
-def handle_get_room_state(data):
-    room_code = data.get('room_code', '').upper()
-    
-    if room_code not in game_state.rooms:
-        return jsonify({'status': 'error', 'message': 'Room not found'})
-    
-    room = game_state.rooms[room_code]
-    room['last_activity'] = time.time()  # Update activity on state check
-    
-    return jsonify({
-        'status': 'success',
-        'room_data': room
-    })
-
-def handle_list_rooms(data):
-    public_rooms = []
-    
-    for room_code, room in game_state.rooms.items():
-        if not room.get('is_24h_channel', False):
-            # Only include rooms with recent activity or players
-            if len(room['players']) > 0 or time.time() - room['last_activity'] < 3600:
-                public_rooms.append({
-                    'room_code': room_code,
-                    'room_name': room['room_name'],
-                    'game_mode': room['game_mode'],
-                    'max_players': room['max_players'],
-                    'player_count': len(room['players']),
-                    'has_password': room['has_password'],
-                    'game_active': room['game_active'],
-                    'host_name': room['host_name'],
-                    'last_activity': room['last_activity']
-                })
-    
-    return jsonify({
-        'status': 'success',
-        'active_rooms': public_rooms
     })
 
 def handle_report_kill(data):
@@ -1349,74 +539,15 @@ def handle_report_kill(data):
     game_state.update_player_activity(victim, room_code)
     game_state.update_leaderboard(room)
     
+    # Send Discord notification
+    discord_manager.send_kill_notification(room, kill_entry)
+    
     game_state.add_recent_activity('Kill', f'{killer} defeated {victim}', room_code)
     logger.info(f"Kill registered: {killer} → {victim} in {room_code}")
     
     return jsonify({
         'status': 'success',
         'message': 'Kill registered successfully'
-    })
-
-def handle_detect_kill(data):
-    """Server-side kill detection endpoint"""
-    room_code = data.get('room_code', '').upper()
-    killer_name = data.get('killer', '').strip()
-    victim_name = data.get('victim', '').strip()
-    
-    if not all([room_code, killer_name, victim_name]):
-        return jsonify({'status': 'error', 'message': 'Missing required fields'})
-    
-    success, message = kill_detector.detect_kill_event(room_code, killer_name, victim_name)
-    
-    return jsonify({
-        'status': 'success' if success else 'error',
-        'message': message
-    })
-
-def handle_verify_death(data):
-    """Handle death verification with screenshot"""
-    room_code = data.get('room_code', '').upper()
-    player_name = data.get('player_name', '').strip()
-    screenshot_data = data.get('screenshot', '')
-    
-    if not all([room_code, player_name, screenshot_data]):
-        return jsonify({'status': 'error', 'message': 'Missing required fields'})
-    
-    # Verify the death
-    success, message = death_verifier.verify_death_screenshot(room_code, player_name, screenshot_data)
-    
-    return jsonify({
-        'status': 'success' if success else 'error',
-        'message': message,
-        'death_verified': success
-    })
-
-def handle_change_team(data):
-    room_code = data.get('room_code', '').upper()
-    player_name = data.get('player_name')
-    new_team = data.get('new_team')
-    
-    if room_code not in game_state.rooms:
-        return jsonify({'status': 'error', 'message': 'Room not found'})
-    
-    room = game_state.rooms[room_code]
-    
-    # Remove player from current team
-    for team in ['team1', 'team2', 'spectators']:
-        if player_name in room['teams'][team]:
-            room['teams'][team].remove(player_name)
-    
-    # Add to new team
-    room['teams'][new_team].append(player_name)
-    room['last_activity'] = time.time()
-    game_state.update_player_activity(player_name, room_code)
-    
-    game_state.add_recent_activity('Team Change', f'{player_name} joined {new_team}', room_code, player_name)
-    
-    return jsonify({
-        'status': 'success',
-        'teams': room['teams'],
-        'message': f'Player {player_name} moved to {new_team}'
     })
 
 def handle_start_game(data):
@@ -1431,6 +562,9 @@ def handle_start_game(data):
     room['kill_feed'] = []
     room['last_activity'] = time.time()
     
+    # Send Discord notification
+    discord_manager.send_match_start(room)
+    
     game_state.add_recent_activity('Game Started', f'Game started in {room["room_name"]}', room_code)
     logger.info(f"Game started in room {room_code}")
     
@@ -1439,88 +573,120 @@ def handle_start_game(data):
         'message': 'Game started'
     })
 
-def handle_leave_room(data):
-    room_code = data.get('room_code', '').upper()
-    player_name = data.get('player_name')
-    
-    if room_code in game_state.rooms:
-        room = game_state.rooms[room_code]
-        if player_name in room['players']:
-            room['players'].remove(player_name)
-            for team in room['teams']:
-                if player_name in room['teams'][team]:
-                    room['teams'][team].remove(player_name)
-            
-            if player_name in room['player_last_active']:
-                del room['player_last_active'][player_name]
-            
-            room['last_activity'] = time.time()
-            game_state.add_recent_activity('Player Left', f'{player_name} left the room', room_code, player_name)
-            logger.info(f"Player {player_name} left room {room_code}")
-    
-    return jsonify({'status': 'success', 'message': 'Left room'})
-
-def handle_get_leaderboard(data):
-    limit = data.get('limit', 50)
-    
-    leaderboard_data = []
-    current_time = time.time()
-    
-    for player_name, stats in game_state.leaderboard.items():
-        kd_ratio = stats['kills'] / max(stats['deaths'], 1)
-        is_online = (current_time - stats.get('last_seen', 0)) < 300
+# Update TDMGameState.add_past_match to send Discord notification
+def add_past_match_with_discord(room_data):
+    """Add completed match to past matches and notify Discord"""
+    if room_data.get('game_active', False) and sum(room_data['scores'].values()) > 0:
+        match_data = {
+            'id': len(game_state.past_matches) + 1,
+            'room_code': room_data['room_code'],
+            'room_name': room_data['room_name'],
+            'team1_score': room_data['scores']['team1'],
+            'team2_score': room_data['scores']['team2'],
+            'team1_players': room_data['teams']['team1'].copy(),
+            'team2_players': room_data['teams']['team2'].copy(),
+            'timestamp': time.time(),
+            'duration': random.randint(300, 1800),  # 5-30 minutes
+            'game_mode': room_data['game_mode'],
+            'kill_count': len(room_data.get('kill_feed', [])),
+            'total_players': len(room_data.get('players', [])),
+            'host_name': room_data.get('host_name', 'Unknown')
+        }
         
-        leaderboard_data.append({
-            'player_name': player_name,
-            'wins': stats.get('wins', 0),
-            'kills': stats.get('kills', 0),
-            'deaths': stats.get('deaths', 0),
-            'games_played': stats.get('games_played', 0),
-            'kd_ratio': kd_ratio,
-            'is_online': is_online,
-            'total_score': stats.get('total_score', 0)
-        })
-    
-    leaderboard_data.sort(key=lambda x: x['kills'], reverse=True)
-    
-    return jsonify({
-        'status': 'success',
-        'leaderboard': leaderboard_data[:limit]
-    })
+        # Determine winner and update stats
+        if room_data['scores']['team1'] > room_data['scores']['team2']:
+            match_data['winner'] = 'team1'
+            match_data['winning_score'] = room_data['scores']['team1']
+            match_data['losing_score'] = room_data['scores']['team2']
+            for player in room_data['teams']['team1']:
+                if player in game_state.leaderboard:
+                    game_state.leaderboard[player]['wins'] += 1
+                    game_state.leaderboard[player]['games_played'] += 1
+                    game_state.leaderboard[player]['total_score'] += 500  # Win bonus
+        elif room_data['scores']['team2'] > room_data['scores']['team1']:
+            match_data['winner'] = 'team2'
+            match_data['winning_score'] = room_data['scores']['team2']
+            match_data['losing_score'] = room_data['scores']['team1']
+            for player in room_data['teams']['team2']:
+                if player in game_state.leaderboard:
+                    game_state.leaderboard[player]['wins'] += 1
+                    game_state.leaderboard[player]['games_played'] += 1
+                    game_state.leaderboard[player]['total_score'] += 500  # Win bonus
+        else:
+            match_data['winner'] = 'draw'
+            match_data['winning_score'] = room_data['scores']['team1']
+            match_data['losing_score'] = room_data['scores']['team2']
+            for player in room_data['teams']['team1'] + room_data['teams']['team2']:
+                if player in game_state.leaderboard:
+                    game_state.leaderboard[player]['games_played'] += 1
+                    game_state.leaderboard[player]['total_score'] += 250  # Draw bonus
+        
+        game_state.past_matches.append(match_data)
+        game_state.total_matches_played += 1
+        
+        # Send Discord notification
+        discord_manager.send_match_end(match_data)
+        
+        game_state.add_recent_activity('Match Completed', 
+                                   f'{room_data["room_name"]} - Team1: {room_data["scores"]["team1"]} vs Team2: {room_data["scores"]["team2"]}',
+                                   room_data['room_code'])
+        
+        # Keep only last 100 matches for performance
+        if len(game_state.past_matches) > 100:
+            game_state.past_matches.pop(0)
 
-def handle_get_past_scores(data):
-    limit = data.get('limit', 12)
-    
-    past_scores = []
-    for match in game_state.past_matches[-limit:]:
-        past_scores.append({
-            'id': match['id'],
-            'room_code': match['room_code'],
-            'room_name': match['room_name'],
-            'team1_score': match['team1_score'],
-            'team2_score': match['team2_score'],
-            'team1_players': match['team1_players'],
-            'team2_players': match['team2_players'],
-            'timestamp': match['timestamp'],
-            'duration': match['duration'],
-            'game_mode': match['game_mode'],
-            'winner': match.get('winner', 'draw'),
-            'kill_count': match.get('kill_count', 0)
-        })
-    
-    return jsonify({
-        'status': 'success',
-        'past_scores': past_scores
-    })
+# Update TDMGameState.add_past_match method
+game_state.add_past_match = add_past_match_with_discord
 
-def handle_get_recent_activity(data):
+# =============================================================================
+# DEPLOYMENT SETUP
+# =============================================================================
+
+@app.route('/deploy', methods=['GET'])
+def deploy_info():
+    """Deployment instructions"""
     return jsonify({
-        'status': 'success',
-        'recent_activity': game_state.recent_activity[-20:]
+        'status': 'ready',
+        'instructions': {
+            '1': 'Set Discord bot token via POST /api/set_discord_bot',
+            '2': 'Create bot on https://discord.com/developers/applications',
+            '3': 'Invite bot to your server with required permissions',
+            '4': 'Set channel ID for notifications (optional)',
+            '5': 'Server is ready to handle TDM matches'
+        },
+        'endpoints': {
+            'web_interface': '/',
+            'api': '/api (POST)',
+            'stats': '/stats',
+            'system': '/system',
+            'discord_status': '/api/discord_status',
+            'set_discord': '/api/set_discord_bot'
+        },
+        'discord_bot_commands': [
+            '!tdm stats - Server statistics',
+            '!tdm rooms - List active rooms',
+            '!tdm leaderboard - Top players',
+            '!tdm recent - Recent matches',
+            '!tdm help - Show help'
+        ]
     })
 
 if __name__ == '__main__':
-    logger.info("🎮 Starting Sea of Thieves TDM Server")
-    logger.info("⚡ Features: Real-time tracking, Death verification, Leaderboards")
+    logger.info("🎮 Starting Sea of Thieves TDM Server with Discord Bot")
+    logger.info("🤖 Discord Bot: Ready to connect")
+    logger.info("⚡ Features: Real-time tracking, Death verification, Leaderboards, Discord notifications")
     logger.info("🌐 Server will be available at http://localhost:5000")
+    logger.info("📚 Visit /deploy for setup instructions")
+    
+    # Check for environment variable for Discord bot token
+    import os
+    discord_token = os.getenv('DISCORD_BOT_TOKEN')
+    discord_channel_id = os.getenv('DISCORD_CHANNEL_ID')
+    
+    if discord_token:
+        logger.info("🔑 Discord bot token found in environment variables")
+        discord_manager.start_bot(discord_token, discord_channel_id)
+    else:
+        logger.info("⚠️ Discord bot token not set. Use /api/set_discord_bot to configure")
+    
     app.run(host='0.0.0.0', port=5000, debug=False, threaded=True)
