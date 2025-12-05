@@ -7,7 +7,7 @@ import string
 import time
 import hashlib
 import requests
-from flask import Flask, request, jsonify, session, redirect, url_for
+from flask import Flask, request, jsonify, session, redirect, url_for, make_response
 from flask_cors import CORS
 from datetime import datetime
 import logging
@@ -27,6 +27,9 @@ DISCORD_PUBLIC_KEY = os.environ.get('DISCORD_PUBLIC_KEY', '')
 
 # Mod role ID for ticket access
 MOD_ROLE_ID = os.environ.get('MOD_ROLE_ID', '')
+
+# Webhook for ticket notifications (optional)
+TICKET_WEBHOOK = os.environ.get('TICKET_WEBHOOK', '')
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -149,6 +152,46 @@ def is_user_admin_in_guild(guild_id, user_id):
         return False
 
 # =============================================================================
+# WEBHOOK FUNCTIONS
+# =============================================================================
+
+def send_ticket_webhook(ticket_id, user_name, user_id, category, issue, channel_id=None, action="created"):
+    """Send webhook notification for ticket events"""
+    if not TICKET_WEBHOOK:
+        return
+    
+    try:
+        category_info = next((c for c in TICKET_CATEGORIES if c["name"] == category), TICKET_CATEGORIES[-1])
+        
+        embed = {
+            "title": f"{category_info['emoji']} Ticket {action.capitalize()}",
+            "description": f"**Ticket ID:** `{ticket_id}`\n**User:** {user_name} (<@{user_id}>)\n**Category:** {category}\n**Issue:** {issue[:500]}",
+            "color": category_info['color'],
+            "timestamp": datetime.utcnow().isoformat(),
+            "footer": {"text": f"Ticket {action}"}
+        }
+        
+        if channel_id and action == "created":
+            embed["fields"] = [{
+                "name": "🔗 Channel",
+                "value": f"<#{channel_id}>",
+                "inline": True
+            }]
+        
+        data = {
+            "embeds": [embed],
+            "username": "GOBLIN Ticket System",
+            "avatar_url": "https://i.imgur.com/Lg9YqZm.png"
+        }
+        
+        response = requests.post(TICKET_WEBHOOK, json=data, timeout=10)
+        if response.status_code not in [200, 204]:
+            logger.error(f"Webhook failed: {response.status_code}")
+            
+    except Exception as e:
+        logger.error(f"Webhook error: {e}")
+
+# =============================================================================
 # TICKET SYSTEM
 # =============================================================================
 
@@ -247,6 +290,9 @@ def create_ticket_channel(guild_id, user_id, user_name, ticket_id, issue, catego
         
         message_response = discord_api_request(f"/channels/{channel['id']}/messages", "POST", welcome_message)
         
+        # Send webhook notification
+        send_ticket_webhook(ticket_id, user_name, user_id, category, issue, channel['id'], "created")
+        
         return channel['id']
         
     except Exception as e:
@@ -256,8 +302,14 @@ def create_ticket_channel(guild_id, user_id, user_name, ticket_id, issue, catego
 def close_ticket_channel(channel_id, ticket_id, closed_by):
     """Close ticket channel and update database"""
     try:
-        # Update database
+        # Get ticket info for webhook
         conn = get_db_connection()
+        ticket = conn.execute(
+            'SELECT * FROM tickets WHERE ticket_id = ?',
+            (ticket_id,)
+        ).fetchone()
+        
+        # Update database
         conn.execute('''
             UPDATE tickets 
             SET status = "closed", resolved_at = CURRENT_TIMESTAMP, assigned_to = ?
@@ -294,6 +346,11 @@ def close_ticket_channel(channel_id, ticket_id, closed_by):
         }
         
         discord_api_request(f"/channels/{channel_id}/messages", "POST", close_message)
+        
+        # Send webhook notification
+        if ticket:
+            send_ticket_webhook(ticket_id, ticket['discord_name'], ticket['discord_id'], 
+                              ticket['category'], ticket['issue'], None, "closed")
         
         return True
         
@@ -370,11 +427,11 @@ def get_db_connection():
     return conn
 
 # =============================================================================
-# KEY VALIDATION
+# KEY VALIDATION - FIXED VERSION
 # =============================================================================
 
 def validate_api_key(api_key):
-    """Validate API key"""
+    """Validate API key - FIXED to properly check session"""
     if not api_key or not api_key.startswith("GOB-"):
         return None
     
@@ -385,14 +442,20 @@ def validate_api_key(api_key):
     ).fetchone()
     
     if player:
+        # Update last used time
         conn.execute(
             'UPDATE players SET last_used = CURRENT_TIMESTAMP WHERE id = ?',
             (player['id'],)
         )
         conn.commit()
+        
+        # Convert to dict for session storage
+        player_dict = dict(player)
+        conn.close()
+        return player_dict
     
     conn.close()
-    return dict(player) if player else None
+    return None
 
 # =============================================================================
 # DISCORD BOT FUNCTIONS
@@ -819,12 +882,12 @@ def verify_discord_signature(request):
         return False
 
 # =============================================================================
-# WEB INTERFACE - PINK/PURPLE DESIGN
+# WEB INTERFACE - DARK MODE PINK/PURPLE DESIGN
 # =============================================================================
 
 @app.route('/')
 def home():
-    """Pink/Purple web design"""
+    """Dark mode Pink/Purple web design"""
     if 'user_key' in session:
         user_data = validate_api_key(session['user_key'])
         if user_data:
@@ -846,44 +909,11 @@ def home():
             
             body {
                 font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
-                background: linear-gradient(135deg, #0f0c29, #302b63, #24243e);
-                color: white;
+                background: #0a0a0a;
+                color: #e0e0e0;
                 min-height: 100vh;
-                overflow: hidden;
+                overflow-x: hidden;
                 position: relative;
-            }
-            
-            .bg-animation {
-                position: fixed;
-                top: 0;
-                left: 0;
-                width: 100%;
-                height: 100%;
-                z-index: -1;
-            }
-            
-            .dot {
-                position: absolute;
-                background: linear-gradient(45deg, #ff00ff, #9d00ff);
-                border-radius: 50%;
-                animation: float 20s infinite linear;
-            }
-            
-            @keyframes float {
-                0% {
-                    transform: translate(0, 0) rotate(0deg);
-                    opacity: 0;
-                }
-                10% {
-                    opacity: 0.7;
-                }
-                90% {
-                    opacity: 0.7;
-                }
-                100% {
-                    transform: translate(calc(100vw * var(--tx)), calc(100vh * var(--ty))) rotate(360deg);
-                    opacity: 0;
-                }
             }
             
             .container {
@@ -928,15 +958,16 @@ def home():
             .key-input {
                 width: 100%;
                 padding: 20px;
-                background: rgba(255, 255, 255, 0.1);
+                background: rgba(25, 25, 25, 0.9);
                 border: 2px solid #9d00ff;
                 border-radius: 15px;
-                color: white;
+                color: #fff;
                 font-size: 18px;
                 text-align: center;
                 margin-bottom: 25px;
                 transition: all 0.3s;
                 backdrop-filter: blur(10px);
+                box-shadow: 0 5px 15px rgba(157, 0, 255, 0.2);
             }
             
             .key-input:focus {
@@ -944,11 +975,11 @@ def home():
                 border-color: #ff00ff;
                 box-shadow: 0 0 30px rgba(255, 0, 255, 0.4);
                 transform: scale(1.02);
-                background: rgba(255, 255, 255, 0.15);
+                background: rgba(30, 30, 30, 0.95);
             }
             
             .key-input::placeholder {
-                color: #b19cd9;
+                color: #666;
             }
             
             .login-btn {
@@ -966,6 +997,7 @@ def home():
                 overflow: hidden;
                 text-transform: uppercase;
                 letter-spacing: 1px;
+                box-shadow: 0 10px 20px rgba(157, 0, 255, 0.3);
             }
             
             .login-btn:hover {
@@ -978,24 +1010,14 @@ def home():
                 transform: translateY(-2px);
             }
             
-            .login-btn::after {
-                content: '';
-                position: absolute;
-                top: -50%;
-                left: -50%;
-                width: 200%;
-                height: 200%;
-                background: linear-gradient(45deg, transparent, rgba(255, 255, 255, 0.2), transparent);
-                transform: rotate(45deg);
-                transition: all 0.5s;
-            }
-            
-            .login-btn:hover::after {
-                left: 100%;
+            .login-btn:disabled {
+                opacity: 0.7;
+                cursor: not-allowed;
+                transform: none !important;
             }
             
             .error-box {
-                background: rgba(255, 0, 0, 0.2);
+                background: rgba(255, 0, 0, 0.1);
                 border: 2px solid rgba(255, 0, 0, 0.4);
                 border-radius: 15px;
                 padding: 16px;
@@ -1013,7 +1035,7 @@ def home():
             }
             
             .info-box {
-                background: rgba(157, 0, 255, 0.2);
+                background: rgba(30, 30, 30, 0.9);
                 border: 2px solid rgba(157, 0, 255, 0.4);
                 border-radius: 15px;
                 padding: 25px;
@@ -1021,6 +1043,7 @@ def home():
                 text-align: left;
                 color: #d4b3ff;
                 backdrop-filter: blur(10px);
+                box-shadow: 0 5px 15px rgba(0, 0, 0, 0.3);
             }
             
             .info-box strong {
@@ -1031,7 +1054,7 @@ def home():
             }
             
             .info-box code {
-                background: rgba(0, 0, 0, 0.3);
+                background: rgba(0, 0, 0, 0.5);
                 padding: 3px 8px;
                 border-radius: 5px;
                 font-family: monospace;
@@ -1041,13 +1064,14 @@ def home():
             
             .bot-status {
                 padding: 12px 24px;
-                background: rgba(255, 255, 255, 0.1);
+                background: rgba(30, 30, 30, 0.9);
                 border: 2px solid rgba(157, 0, 255, 0.4);
                 border-radius: 25px;
                 margin-top: 25px;
                 display: inline-block;
                 backdrop-filter: blur(10px);
                 font-weight: 600;
+                box-shadow: 0 5px 15px rgba(0, 0, 0, 0.3);
             }
             
             .status-online {
@@ -1058,6 +1082,13 @@ def home():
             .status-offline {
                 color: #ff6b6b;
                 border-color: rgba(255, 107, 107, 0.4);
+            }
+            
+            .neon-line {
+                height: 2px;
+                background: linear-gradient(90deg, transparent, #ff00ff, transparent);
+                margin: 30px 0;
+                width: 100%;
             }
             
             @media (max-width: 768px) {
@@ -1071,11 +1102,11 @@ def home():
         </style>
     </head>
     <body>
-        <div class="bg-animation" id="bgAnimation"></div>
-        
         <div class="container">
             <div class="logo">GOBLIN</div>
-            <div class="subtitle">Enter your API key to access the neon dashboard</div>
+            <div class="subtitle">Enter your API key to access the dashboard</div>
+            
+            <div class="neon-line"></div>
             
             <input type="password" 
                    class="key-input" 
@@ -1084,7 +1115,7 @@ def home():
                    autocomplete="off"
                    spellcheck="false">
             
-            <button class="login-btn" onclick="validateKey()">
+            <button class="login-btn" onclick="validateKey()" id="loginBtn">
                 Enter Dashboard
             </button>
             
@@ -1106,28 +1137,10 @@ def home():
         </div>
         
         <script>
-            function initBackground() {
-                const container = document.getElementById('bgAnimation');
-                for (let i = 0; i < 40; i++) {
-                    const dot = document.createElement('div');
-                    dot.className = 'dot';
-                    const size = Math.random() * 4 + 2;
-                    dot.style.width = dot.style.height = size + 'px';
-                    dot.style.left = Math.random() * 100 + '%';
-                    dot.style.top = Math.random() * 100 + '%';
-                    dot.style.opacity = Math.random() * 0.6 + 0.2;
-                    dot.style.setProperty('--tx', Math.random() * 2 - 1);
-                    dot.style.setProperty('--ty', Math.random() * 2 - 1);
-                    dot.style.animationDelay = Math.random() * 5 + 's';
-                    dot.style.animationDuration = Math.random() * 20 + 20 + 's';
-                    container.appendChild(dot);
-                }
-            }
-            
             async function validateKey() {
                 const key = document.getElementById('apiKey').value.trim().toUpperCase();
                 const errorDiv = document.getElementById('errorMessage');
-                const btn = document.querySelector('.login-btn');
+                const btn = document.getElementById('loginBtn');
                 
                 if (!key) {
                     errorDiv.textContent = "Please enter an API key";
@@ -1156,6 +1169,9 @@ def home():
                     if (data.valid) {
                         btn.innerHTML = '✅ Access Granted';
                         btn.style.background = 'linear-gradient(45deg, #00ff9d, #00d4ff)';
+                        
+                        // Store in session
+                        sessionStorage.setItem('user_key', key);
                         
                         setTimeout(() => {
                             window.location.href = '/dashboard';
@@ -1196,10 +1212,15 @@ def home():
             }
             
             document.addEventListener('DOMContentLoaded', function() {
-                initBackground();
                 document.getElementById('apiKey').focus();
                 checkBotStatus();
                 setInterval(checkBotStatus, 30000);
+                
+                // Check if already logged in
+                const storedKey = sessionStorage.getItem('user_key');
+                if (storedKey) {
+                    document.getElementById('apiKey').value = storedKey;
+                }
             });
         </script>
     </body>
@@ -1208,9 +1229,9 @@ def home():
 
 @app.route('/api/validate-key', methods=['POST'])
 def api_validate_key():
-    """Validate API key"""
+    """Validate API key - FIXED to properly set session"""
     data = request.get_json()
-    api_key = data.get('api_key', '').strip()
+    api_key = data.get('api_key', '').strip().upper()
     
     if not api_key:
         return jsonify({"valid": False, "error": "No key provided"})
@@ -1220,6 +1241,8 @@ def api_validate_key():
     if user_data:
         session['user_key'] = api_key
         session['user_data'] = user_data
+        # Make sure session is saved
+        session.modified = True
         return jsonify({"valid": True})
     else:
         return jsonify({"valid": False, "error": "Invalid API key"})
@@ -1228,17 +1251,23 @@ def api_validate_key():
 def logout():
     """Logout"""
     session.clear()
-    return redirect(url_for('home'))
+    response = make_response(redirect(url_for('home')))
+    response.delete_cookie('session')
+    return response
 
 @app.route('/dashboard')
 def dashboard():
-    """Pink/Purple dashboard"""
+    """Dark mode Pink/Purple dashboard"""
     if 'user_key' not in session:
         return redirect(url_for('home'))
     
     user_data = session.get('user_data')
     if not user_data:
-        return redirect(url_for('home'))
+        # Try to re-validate the key
+        user_data = validate_api_key(session.get('user_key'))
+        if not user_data:
+            return redirect(url_for('home'))
+        session['user_data'] = user_data
     
     # Calculate stats
     kd = user_data.get('total_kills', 0) / max(user_data.get('total_deaths', 1), 1)
@@ -1260,20 +1289,23 @@ def dashboard():
         category_info = next((c for c in TICKET_CATEGORIES if c["name"] == ticket['category']), TICKET_CATEGORIES[-1])
         tickets_html += f'''
         <div class="ticket-card">
-            <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px;">
+            <div class="ticket-header">
                 <div>
-                    <span style="color: { '#' + hex(category_info['color'])[2:] };">{category_info['emoji']}</span>
+                    <span style="color: #{hex(category_info['color'])[2:]}; font-size: 1.2rem;">{category_info['emoji']}</span>
                     <strong>TICKET-{ticket['ticket_id']}</strong>
                 </div>
-                <span style="color: #00ff9d; font-size: 0.9rem;">OPEN</span>
+                <span class="status-open">OPEN</span>
             </div>
-            <p style="color: #d4b3ff; margin-bottom: 15px;">{ticket['issue'][:80]}...</p>
-            <div style="display: flex; gap: 10px;">
-                <button class="ticket-btn" onclick="viewTicket('{ticket['ticket_id']}')">View</button>
+            <p class="ticket-issue">{ticket['issue'][:80]}...</p>
+            <div class="ticket-actions">
+                <button class="ticket-btn view" onclick="viewTicket('{ticket['ticket_id']}')">View</button>
                 <button class="ticket-btn close" onclick="closeTicket('{ticket['ticket_id']}')">Close</button>
             </div>
         </div>
         '''
+    
+    if not tickets_html:
+        tickets_html = '<p class="no-tickets">No open tickets</p>'
     
     return f'''
     <!DOCTYPE html>
@@ -1291,36 +1323,15 @@ def dashboard():
             
             body {{
                 font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
-                background: linear-gradient(135deg, #0f0c29, #302b63, #24243e);
-                color: white;
+                background: #0a0a0a;
+                color: #e0e0e0;
                 min-height: 100vh;
                 position: relative;
-            }}
-            
-            .bg-animation {{
-                position: fixed;
-                top: 0;
-                left: 0;
-                width: 100%;
-                height: 100%;
-                z-index: -1;
-                opacity: 0.2;
-            }}
-            
-            .bg-dot {{
-                position: absolute;
-                background: linear-gradient(45deg, #ff00ff, #9d00ff);
-                border-radius: 50%;
-                animation: floatBg 50s infinite linear;
-            }}
-            
-            @keyframes floatBg {{
-                0% {{ transform: translateY(0) rotate(0deg); }}
-                100% {{ transform: translateY(-100vh) rotate(360deg); }}
+                overflow-x: hidden;
             }}
             
             .header {{
-                background: rgba(15, 12, 41, 0.9);
+                background: rgba(15, 15, 15, 0.95);
                 backdrop-filter: blur(20px);
                 border-bottom: 3px solid #ff00ff;
                 padding: 25px 40px;
@@ -1330,6 +1341,7 @@ def dashboard():
                 position: sticky;
                 top: 0;
                 z-index: 100;
+                box-shadow: 0 5px 30px rgba(0, 0, 0, 0.5);
             }}
             
             .logo {{
@@ -1338,6 +1350,7 @@ def dashboard():
                 background: linear-gradient(45deg, #ff00ff, #9d00ff);
                 -webkit-background-clip: text;
                 -webkit-text-fill-color: transparent;
+                text-shadow: 0 0 20px rgba(255, 0, 255, 0.3);
             }}
             
             .user-info {{
@@ -1366,6 +1379,7 @@ def dashboard():
                 cursor: pointer;
                 text-decoration: none;
                 transition: all 0.3s;
+                box-shadow: 0 5px 15px rgba(255, 65, 108, 0.3);
             }}
             
             .logout-btn:hover {{
@@ -1387,7 +1401,7 @@ def dashboard():
             }}
             
             .stat-card {{
-                background: rgba(255, 255, 255, 0.1);
+                background: rgba(30, 30, 30, 0.9);
                 backdrop-filter: blur(20px);
                 border-radius: 20px;
                 padding: 35px;
@@ -1396,12 +1410,13 @@ def dashboard():
                 transition: all 0.4s;
                 position: relative;
                 overflow: hidden;
+                box-shadow: 0 10px 30px rgba(0, 0, 0, 0.3);
             }}
             
             .stat-card:hover {{
                 transform: translateY(-10px) scale(1.02);
                 border-color: rgba(255, 0, 255, 0.5);
-                box-shadow: 0 20px 40px rgba(255, 0, 255, 0.3);
+                box-shadow: 0 20px 40px rgba(255, 0, 255, 0.2);
             }}
             
             .stat-card::before {{
@@ -1431,7 +1446,7 @@ def dashboard():
             }}
             
             .key-section {{
-                background: rgba(255, 255, 255, 0.1);
+                background: rgba(30, 30, 30, 0.9);
                 backdrop-filter: blur(20px);
                 border-radius: 25px;
                 padding: 50px;
@@ -1439,6 +1454,7 @@ def dashboard():
                 border: 2px solid rgba(157, 0, 255, 0.3);
                 position: relative;
                 overflow: hidden;
+                box-shadow: 0 15px 35px rgba(0, 0, 0, 0.3);
             }}
             
             .key-section::before {{
@@ -1452,7 +1468,7 @@ def dashboard():
             }}
             
             .key-display {{
-                background: rgba(0, 0, 0, 0.4);
+                background: rgba(0, 0, 0, 0.5);
                 border: 2px solid rgba(157, 0, 255, 0.5);
                 border-radius: 16px;
                 padding: 25px;
@@ -1466,6 +1482,7 @@ def dashboard():
                 letter-spacing: 2px;
                 font-size: 1.3rem;
                 text-shadow: 0 0 10px #00ff9d;
+                box-shadow: 0 5px 15px rgba(0, 255, 157, 0.1);
             }}
             
             .key-display::before {{
@@ -1483,6 +1500,7 @@ def dashboard():
                 font-size: 1.2rem;
                 color: #b19cd9;
                 backdrop-filter: blur(5px);
+                border-radius: 14px;
             }}
             
             .key-display.revealed::before {{
@@ -1490,26 +1508,55 @@ def dashboard():
             }}
             
             .tickets-section {{
-                background: rgba(255, 255, 255, 0.1);
+                background: rgba(30, 30, 30, 0.9);
                 backdrop-filter: blur(20px);
                 border-radius: 25px;
                 padding: 50px;
                 margin-bottom: 50px;
                 border: 2px solid rgba(255, 0, 255, 0.3);
+                box-shadow: 0 15px 35px rgba(0, 0, 0, 0.3);
             }}
             
             .ticket-card {{
-                background: rgba(0, 0, 0, 0.3);
+                background: rgba(20, 20, 20, 0.8);
                 border-radius: 16px;
                 padding: 25px;
                 margin-bottom: 20px;
                 border: 1px solid rgba(157, 0, 255, 0.2);
                 transition: all 0.3s;
+                box-shadow: 0 5px 15px rgba(0, 0, 0, 0.2);
             }}
             
             .ticket-card:hover {{
                 border-color: rgba(255, 0, 255, 0.4);
                 transform: translateX(10px);
+                box-shadow: 0 10px 25px rgba(255, 0, 255, 0.1);
+            }}
+            
+            .ticket-header {{
+                display: flex;
+                justify-content: space-between;
+                align-items: center;
+                margin-bottom: 15px;
+            }}
+            
+            .status-open {{
+                color: #00ff9d;
+                font-size: 0.9rem;
+                font-weight: bold;
+                text-shadow: 0 0 10px #00ff9d;
+            }}
+            
+            .ticket-issue {{
+                color: #d4b3ff;
+                margin-bottom: 20px;
+                font-size: 0.95rem;
+                line-height: 1.4;
+            }}
+            
+            .ticket-actions {{
+                display: flex;
+                gap: 10px;
             }}
             
             .ticket-btn {{
@@ -1521,16 +1568,30 @@ def dashboard():
                 cursor: pointer;
                 transition: all 0.3s;
                 font-weight: bold;
+                box-shadow: 0 3px 10px rgba(157, 0, 255, 0.2);
             }}
             
             .ticket-btn:hover {{
                 background: rgba(157, 0, 255, 0.5);
                 transform: translateY(-3px);
+                box-shadow: 0 6px 15px rgba(157, 0, 255, 0.3);
             }}
             
             .ticket-btn.close {{
                 background: rgba(255, 0, 0, 0.3);
                 border-color: #ff0000;
+            }}
+            
+            .ticket-btn.close:hover {{
+                background: rgba(255, 0, 0, 0.5);
+                box-shadow: 0 6px 15px rgba(255, 0, 0, 0.3);
+            }}
+            
+            .no-tickets {{
+                color: #666;
+                text-align: center;
+                padding: 40px;
+                font-size: 1.1rem;
             }}
             
             .action-buttons {{
@@ -1559,6 +1620,7 @@ def dashboard():
                 justify-content: center;
                 text-transform: uppercase;
                 letter-spacing: 1px;
+                box-shadow: 0 8px 20px rgba(157, 0, 255, 0.3);
             }}
             
             .action-btn:hover {{
@@ -1625,8 +1687,6 @@ def dashboard():
         </style>
     </head>
     <body>
-        <div class="bg-animation" id="bgAnimation"></div>
-        
         <div class="header">
             <div class="logo">GOBLIN DASHBOARD</div>
             <div class="user-info">
@@ -1688,29 +1748,13 @@ def dashboard():
             
             <div class="tickets-section">
                 <h2 style="color: #ff00ff; margin-bottom: 30px; font-size: 2rem; text-shadow: 0 0 15px rgba(255, 0, 255, 0.5);">Your Open Tickets</h2>
-                {tickets_html if tickets_html else '<p style="color: #b19cd9; text-align: center; padding: 40px;">No open tickets</p>'}
+                {tickets_html}
             </div>
         </div>
         
         <div class="notification" id="notification"></div>
         
         <script>
-            function initBackground() {{
-                const container = document.getElementById('bgAnimation');
-                for (let i = 0; i < 25; i++) {{
-                    const dot = document.createElement('div');
-                    dot.className = 'bg-dot';
-                    const size = Math.random() * 150 + 50;
-                    dot.style.width = dot.style.height = size + 'px';
-                    dot.style.left = Math.random() * 100 + '%';
-                    dot.style.top = '100vh';
-                    dot.style.opacity = Math.random() * 0.1 + 0.05;
-                    dot.style.animationDelay = Math.random() * 20 + 's';
-                    dot.style.animationDuration = Math.random() * 40 + 40 + 's';
-                    container.appendChild(dot);
-                }}
-            }}
-            
             function revealKey() {{
                 const display = document.getElementById('apiKeyDisplay');
                 display.classList.add('revealed');
@@ -1779,7 +1823,6 @@ def dashboard():
             }}
             
             document.addEventListener('DOMContentLoaded', function() {{
-                initBackground();
                 // Auto-refresh every 5 minutes
                 setInterval(refreshStats, 300000);
             }});
@@ -1883,7 +1926,7 @@ if __name__ == '__main__':
     init_db()
     
     print(f"\n{'='*60}")
-    print("🎮 GOBLIN BOT - PINK/PURPLE EDITION")
+    print("🎮 GOBLIN BOT - DARK MODE PINK/PURPLE EDITION")
     print(f"{'='*60}")
     
     if test_discord_token():
@@ -1898,7 +1941,7 @@ if __name__ == '__main__':
         print("❌ Discord token not set or invalid")
     
     print(f"\n🌐 Web Interface: http://localhost:{port}")
-    print(f"🎨 Design: Pink/Purple neon theme")
+    print(f"🎨 Design: Dark mode Pink/Purple theme")
     
     print(f"\n🎮 Discord Commands:")
     print(f"   /ping - Check bot status")
@@ -1913,6 +1956,7 @@ if __name__ == '__main__':
     print(f"   • Category options: Bug, Feature, Account, Tech, Other")
     print(f"   • Close button in ticket channel")
     print(f"   • Private channels (user + mods only)")
+    print(f"   • Webhook notifications: {'Enabled' if TICKET_WEBHOOK else 'Disabled'}")
     
     print(f"\n🔐 Security Features:")
     print(f"   • API keys shown with /register and /key")
@@ -1923,12 +1967,13 @@ if __name__ == '__main__':
     print(f"\n💡 How it works:")
     print(f"   1. Use /register in Discord to get API key")
     print(f"   2. Use /key to see your key anytime")
-    print(f"   3. Login to neon dashboard")
+    print(f"   3. Login to dark mode dashboard")
     print(f"   4. Use /ticket for private support")
     print(f"   5. Click close button in ticket channel")
     
     print(f"\n🔧 Environment Variables:")
     print(f"   MOD_ROLE_ID={MOD_ROLE_ID or 'Not set'}")
+    print(f"   TICKET_WEBHOOK={'Set' if TICKET_WEBHOOK else 'Not set'}")
     
     print(f"\n{'='*60}\n")
     
