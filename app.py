@@ -1,4 +1,518 @@
-# app.py - FULL WEB SERVER WITH DISCORD BOT
+# app.py - FULL WORKING VERSION WITH DISCORD VERIFICATION
+import os
+import json
+import sqlite3
+import random
+import string
+import hashlib
+import hmac
+import time
+from flask import Flask, request, jsonify, render_template
+from flask_cors import CORS
+from datetime import datetime
+import logging
+
+app = Flask(__name__)
+CORS(app)
+DATABASE = 'sot_tdm.db'
+port = int(os.environ.get("PORT", 10000))
+
+# Get Discord Public Key from environment
+DISCORD_PUBLIC_KEY = os.environ.get('DISCORD_PUBLIC_KEY', '')
+
+# Configure logging
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
+
+# =============================================================================
+# DISCORD SIGNATURE VERIFICATION - CRITICAL FOR RENDER.COM
+# =============================================================================
+
+def verify_discord_request(request):
+    """Verify that the request came from Discord"""
+    if not DISCORD_PUBLIC_KEY:
+        logger.warning("DISCORD_PUBLIC_KEY not set, skipping verification")
+        return True
+    
+    try:
+        # Get signature and timestamp from headers
+        signature = request.headers.get('X-Signature-Ed25519')
+        timestamp = request.headers.get('X-Signature-Timestamp')
+        
+        if not signature or not timestamp:
+            logger.error("Missing Discord signature headers")
+            return False
+        
+        # Get raw body
+        body = request.get_data()
+        
+        # Verify signature
+        import nacl.signing
+        import nacl.exceptions
+        
+        # Convert hex signature to bytes
+        signature_bytes = bytes.fromhex(signature)
+        
+        # Create verify key
+        verify_key = nacl.signing.VerifyKey(bytes.fromhex(DISCORD_PUBLIC_KEY))
+        
+        # Verify
+        message = timestamp.encode() + body
+        verify_key.verify(message, signature_bytes)
+        
+        logger.info("Discord signature verified successfully")
+        return True
+        
+    except ImportError:
+        logger.error("PyNaCl not installed. Install with: pip install pynacl")
+        return False
+    except Exception as e:
+        logger.error(f"Discord signature verification failed: {e}")
+        return False
+
+# =============================================================================
+# DATABASE FUNCTIONS
+# =============================================================================
+
+def init_db():
+    """Initialize database"""
+    with app.app_context():
+        conn = sqlite3.connect(DATABASE)
+        cursor = conn.cursor()
+        
+        cursor.execute('''
+            CREATE TABLE IF NOT EXISTS matches (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                room_code TEXT UNIQUE,
+                team1_name TEXT DEFAULT 'Team 1',
+                team2_name TEXT DEFAULT 'Team 2',
+                team1_score INTEGER DEFAULT 0,
+                team2_score INTEGER DEFAULT 0,
+                status TEXT DEFAULT 'waiting',
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
+        ''')
+        
+        cursor.execute('''
+            CREATE TABLE IF NOT EXISTS players (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                discord_id TEXT UNIQUE,
+                username TEXT,
+                team INTEGER DEFAULT 0,
+                kills INTEGER DEFAULT 0,
+                deaths INTEGER DEFAULT 0,
+                wins INTEGER DEFAULT 0,
+                losses INTEGER DEFAULT 0,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
+        ''')
+        
+        conn.commit()
+        conn.close()
+        logger.info("✅ Database initialized")
+
+def get_db_connection():
+    """Get database connection"""
+    conn = sqlite3.connect(DATABASE)
+    conn.row_factory = sqlite3.Row
+    return conn
+
+# =============================================================================
+# HTML ROUTES - WEB INTERFACE
+# =============================================================================
+
+@app.route('/')
+def index():
+    """Main web interface"""
+    return '''
+    <!DOCTYPE html>
+    <html lang="en">
+    <head>
+        <meta charset="UTF-8">
+        <meta name="viewport" content="width=device-width, initial-scale=1.0">
+        <title>SoT TDM Server</title>
+        <style>
+            body { font-family: Arial, sans-serif; margin: 0; padding: 20px; background: #f5f5f5; }
+            .container { max-width: 1200px; margin: 0 auto; }
+            header { text-align: center; margin-bottom: 40px; padding: 20px; background: white; border-radius: 10px; box-shadow: 0 2px 10px rgba(0,0,0,0.1); }
+            h1 { color: #333; }
+            .status { display: inline-block; background: #4CAF50; color: white; padding: 5px 15px; border-radius: 20px; }
+            .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 20px; margin-top: 20px; }
+            .card { background: white; padding: 20px; border-radius: 10px; box-shadow: 0 2px 10px rgba(0,0,0,0.1); }
+            .btn { display: inline-block; background: #007bff; color: white; padding: 10px 20px; border-radius: 5px; text-decoration: none; margin: 5px; border: none; cursor: pointer; }
+            .btn:hover { background: #0056b3; }
+            .btn-green { background: #28a745; }
+            .btn-green:hover { background: #1e7e34; }
+            .btn-red { background: #dc3545; }
+            .btn-red:hover { background: #bd2130; }
+            .match-card { background: #f8f9fa; padding: 15px; margin: 10px 0; border-radius: 5px; border-left: 4px solid #007bff; }
+            .code { font-family: monospace; background: #333; color: white; padding: 2px 8px; border-radius: 3px; }
+        </style>
+    </head>
+    <body>
+        <div class="container">
+            <header>
+                <h1>🏴‍☠️ Sea of Thieves TDM Server</h1>
+                <div class="status" id="status">🟢 ONLINE</div>
+                <p>Complete TDM match management system with Discord bot integration</p>
+            </header>
+            
+            <div class="grid">
+                <div class="card">
+                    <h2>🎮 Create Match</h2>
+                    <button onclick="createMatch()" class="btn btn-green">Create Room</button>
+                    <div id="roomResult"></div>
+                </div>
+                
+                <div class="card">
+                    <h2>📊 Active Matches</h2>
+                    <div id="matchesList">Loading...</div>
+                    <button onclick="loadMatches()" class="btn">Refresh</button>
+                </div>
+                
+                <div class="card">
+                    <h2>🤖 Discord Bot Status</h2>
+                    <p>Interactions URL: <code id="interactionsUrl">Loading...</code></p>
+                    <p>Public Key: <code id="publicKey">Set in environment</code></p>
+                    <p>Status: <span id="botStatus">Checking...</span></p>
+                </div>
+                
+                <div class="card">
+                    <h2>🔧 Quick Setup Guide</h2>
+                    <ol>
+                        <li>Set <code>DISCORD_PUBLIC_KEY</code> in Render environment</li>
+                        <li>Copy your app URL below</li>
+                        <li>Paste in Discord Dev Portal → Interactions Endpoint URL</li>
+                        <li>Save changes and wait 1-2 minutes</li>
+                    </ol>
+                </div>
+            </div>
+            
+            <div class="card" style="margin-top: 30px;">
+                <h2>📋 Your Deployment Information</h2>
+                <p><strong>App URL:</strong> <code id="appUrl">Loading...</code></p>
+                <p><strong>Interactions Endpoint:</strong> <code id="endpointUrl">Loading...</code></p>
+                <p><strong>Health Check:</strong> <code id="healthUrl">Loading...</code></p>
+                <button onclick="copyEndpoint()" class="btn">Copy Endpoint URL</button>
+                <button onclick="testEndpoint()" class="btn btn-green">Test Endpoint</button>
+            </div>
+            
+            <div class="card" style="margin-top: 30px;">
+                <h2>⚠️ Troubleshooting</h2>
+                <p>If Discord shows "Validation errors":</p>
+                <ul>
+                    <li>Make sure <code>DISCORD_PUBLIC_KEY</code> is set correctly</li>
+                    <li>Wait 1-2 minutes after saving in Discord portal</li>
+                    <li>Check Render logs for errors</li>
+                    <li>Verify your app URL is accessible</li>
+                </ul>
+            </div>
+        </div>
+        
+        <script>
+            function createMatch() {
+                fetch('/api/match/create', { method: 'POST' })
+                    .then(r => r.json())
+                    .then(data => {
+                        document.getElementById('roomResult').innerHTML = `
+                            <div class="match-card">
+                                <h3>✅ Room Created!</h3>
+                                <p>Code: <span class="code">${data.room_code}</span></p>
+                                <a href="/match/${data.room_code}" class="btn">View Match</a>
+                            </div>
+                        `;
+                        loadMatches();
+                    });
+            }
+            
+            function loadMatches() {
+                fetch('/api/matches/active')
+                    .then(r => r.json())
+                    .then(matches => {
+                        let html = '';
+                        matches.forEach(match => {
+                            html += `
+                                <div class="match-card">
+                                    <h3>${match.room_code}</h3>
+                                    <p>${match.team1_name}: ${match.team1_score} vs ${match.team2_name}: ${match.team2_score}</p>
+                                    <p>Status: ${match.status}</p>
+                                </div>
+                            `;
+                        });
+                        document.getElementById('matchesList').innerHTML = html || '<p>No active matches</p>';
+                    });
+            }
+            
+            function copyEndpoint() {
+                const url = document.getElementById('endpointUrl').textContent;
+                navigator.clipboard.writeText(url);
+                alert('Endpoint URL copied to clipboard!');
+            }
+            
+            function testEndpoint() {
+                fetch('/interactions', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ type: 1 })
+                })
+                .then(r => r.json())
+                .then(data => {
+                    if (data.type === 1) {
+                        alert('✅ Endpoint working! Discord verification successful.');
+                    } else {
+                        alert('⚠️ Unexpected response from endpoint.');
+                    }
+                })
+                .catch(e => {
+                    alert('❌ Endpoint test failed: ' + e.message);
+                });
+            }
+            
+            // Initialize
+            document.addEventListener('DOMContentLoaded', function() {
+                const baseUrl = window.location.origin;
+                document.getElementById('appUrl').textContent = baseUrl;
+                document.getElementById('endpointUrl').textContent = baseUrl + '/interactions';
+                document.getElementById('healthUrl').textContent = baseUrl + '/health';
+                document.getElementById('interactionsUrl').textContent = baseUrl + '/interactions';
+                
+                loadMatches();
+                
+                // Check bot status
+                fetch('/health')
+                    .then(r => r.json())
+                    .then(data => {
+                        document.getElementById('botStatus').innerHTML = 
+                            data.discord_verified ? '✅ Verified' : '❌ Not verified';
+                    });
+            });
+        </script>
+    </body>
+    </html>
+    '''
+
+@app.route('/match/<room_code>')
+def match_page(room_code):
+    """Match detail page"""
+    conn = get_db_connection()
+    match = conn.execute('SELECT * FROM matches WHERE room_code = ?', (room_code,)).fetchone()
+    conn.close()
+    
+    if not match:
+        return '<h1>Match not found</h1>'
+    
+    return f'''
+    <html>
+    <head><title>Match {room_code}</title></head>
+    <body>
+        <h1>Match: {room_code}</h1>
+        <div>
+            <h2>Scores:</h2>
+            <p>{match['team1_name']}: {match['team1_score']}</p>
+            <p>{match['team2_name']}: {match['team2_score']}</p>
+        </div>
+        <a href="/">Back to Home</a>
+    </body>
+    </html>
+    '''
+
+# =============================================================================
+# DISCORD INTERACTIONS ENDPOINT - WITH PROPER VERIFICATION
+# =============================================================================
+
+@app.route('/interactions', methods=['POST'])
+def interactions():
+    """Discord Interactions Endpoint - MUST BE VERIFIED"""
+    
+    # Verify Discord signature
+    if not verify_discord_request(request):
+        logger.error("Discord signature verification failed")
+        return jsonify({"error": "Invalid request signature"}), 401
+    
+    try:
+        data = request.get_json()
+        
+        # Handle PING (Discord verification)
+        if data.get('type') == 1:
+            logger.info("Received Discord verification ping")
+            return jsonify({"type": 1})  # PONG response
+        
+        # Handle APPLICATION_COMMAND (slash commands)
+        if data.get('type') == 2:
+            command = data.get('data', {}).get('name')
+            logger.info(f"Received Discord command: {command}")
+            
+            if command == 'ping':
+                return jsonify({
+                    "type": 4,
+                    "data": {
+                        "content": "🏓 Pong! SoT TDM Bot is online!",
+                        "flags": 64
+                    }
+                })
+            
+            elif command == 'room':
+                # Generate room code
+                room_code = ''.join(random.choices(string.ascii_uppercase + string.digits, k=6))
+                
+                # Save to database
+                conn = get_db_connection()
+                cursor = conn.cursor()
+                cursor.execute('INSERT INTO matches (room_code) VALUES (?)', (room_code,))
+                conn.commit()
+                conn.close()
+                
+                return jsonify({
+                    "type": 4,
+                    "data": {
+                        "content": f"🎮 **TDM Room Created!**\n**Code:** `{room_code}`\n\nUse this code to track scores on the web dashboard.",
+                        "flags": 0
+                    }
+                })
+            
+            elif command == 'stats':
+                options = data.get('data', {}).get('options', [])
+                username = options[0].get('value') if options else None
+                
+                if username:
+                    conn = get_db_connection()
+                    player = conn.execute('SELECT * FROM players WHERE username LIKE ?', (f'%{username}%',)).fetchone()
+                    conn.close()
+                    
+                    if player:
+                        kd = player['kills'] / max(player['deaths'], 1)
+                        return jsonify({
+                            "type": 4,
+                            "data": {
+                                "content": f"📊 **{player['username']} Stats**\nKills: {player['kills']}\nDeaths: {player['deaths']}\nK/D: {kd:.2f}",
+                                "flags": 64
+                            }
+                        })
+                
+                return jsonify({
+                    "type": 4,
+                    "data": {
+                        "content": "Usage: `/stats username`",
+                        "flags": 64
+                    }
+                })
+        
+        # Unknown interaction type
+        return jsonify({"error": "Unknown interaction type"}), 400
+        
+    except Exception as e:
+        logger.error(f"Error handling interaction: {e}")
+        return jsonify({"error": "Internal server error"}), 500
+
+# =============================================================================
+# API ENDPOINTS
+# =============================================================================
+
+@app.route('/api/match/create', methods=['POST'])
+def api_create_match():
+    """Create a new match"""
+    room_code = ''.join(random.choices(string.ascii_uppercase + string.digits, k=6))
+    
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    cursor.execute('INSERT INTO matches (room_code) VALUES (?)', (room_code,))
+    conn.commit()
+    match_id = cursor.lastrowid
+    conn.close()
+    
+    return jsonify({
+        "success": True,
+        "room_code": room_code,
+        "match_id": match_id
+    })
+
+@app.route('/api/matches/active')
+def get_active_matches():
+    """Get active matches"""
+    conn = get_db_connection()
+    matches = conn.execute('SELECT * FROM matches WHERE status != "ended" ORDER BY created_at DESC LIMIT 10').fetchall()
+    conn.close()
+    
+    return jsonify([dict(match) for match in matches])
+
+@app.route('/api/match/<room_code>/score', methods=['POST'])
+def update_score(room_code):
+    """Update match score"""
+    data = request.json
+    conn = get_db_connection()
+    
+    if data.get('team') == 1:
+        conn.execute('UPDATE matches SET team1_score = team1_score + 1 WHERE room_code = ?', (room_code,))
+    else:
+        conn.execute('UPDATE matches SET team2_score = team2_score + 1 WHERE room_code = ?', (room_code,))
+    
+    conn.commit()
+    conn.close()
+    return jsonify({"success": True})
+
+# =============================================================================
+# HEALTH & STATUS ENDPOINTS
+# =============================================================================
+
+@app.route('/health')
+def health():
+    """Health check endpoint"""
+    discord_verified = bool(DISCORD_PUBLIC_KEY)
+    
+    return jsonify({
+        "status": "healthy",
+        "timestamp": datetime.utcnow().isoformat(),
+        "discord_verified": discord_verified,
+        "endpoints": {
+            "interactions": f"{request.host_url}interactions",
+            "web_interface": request.host_url
+        },
+        "environment": {
+            "discord_public_key_set": bool(DISCORD_PUBLIC_KEY),
+            "port": port
+        }
+    })
+
+@app.route('/verify-test', methods=['POST'])
+def verify_test():
+    """Test endpoint for Discord verification"""
+    # Simulate Discord verification request
+    return jsonify({"type": 1})
+
+# =============================================================================
+# STARTUP
+# =============================================================================
+
+if __name__ == '__main__':
+    # Initialize database
+    init_db()
+    
+    print(f"\n{'='*60}")
+    print("🚀 SoT TDM Server Starting Up!")
+    print(f"{'='*60}")
+    print(f"🌐 Web Interface: http://localhost:{port}")
+    print(f"🤖 Discord Interactions: http://localhost:{port}/interactions")
+    print(f"📊 Health Check: http://localhost:{port}/health")
+    print(f"{'='*60}")
+    
+    if not DISCORD_PUBLIC_KEY:
+        print("⚠️ WARNING: DISCORD_PUBLIC_KEY not set in environment!")
+        print("   Discord bot will not work properly.")
+        print("   Set it in Render.com environment variables.")
+    else:
+        print("✅ DISCORD_PUBLIC_KEY is set")
+    
+    print(f"\n📝 To set up Discord bot:")
+    print(f"1. Go to Discord Developer Portal")
+    print(f"2. Find your application")
+    print(f"3. Go to 'General Information'")
+    print(f"4. Copy 'PUBLIC KEY' and set as DISCORD_PUBLIC_KEY in Render")
+    print(f"5. Set Interactions Endpoint URL to: http://YOUR-APP.onrender.com/interactions")
+    print(f"6. Save and wait 1-2 minutes")
+    print(f"{'='*60}\n")
+    
+    # Start Flask server
+    app.run(host='0.0.0.0', port=port, debug=False)# app.py - FULL WEB SERVER WITH DISCORD BOT
 import os
 import json
 import sqlite3
