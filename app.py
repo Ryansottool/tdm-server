@@ -976,16 +976,6 @@ def home():
                 position: relative;
             }
             
-            #particles-js {
-                position: fixed;
-                width: 100%;
-                height: 100%;
-                top: 0;
-                left: 0;
-                z-index: -1;
-                background: radial-gradient(ellipse at center, #0a0015 0%, #000000 70%);
-            }
-            
             .container {
                 max-width: 500px;
                 margin: 0 auto;
@@ -1248,34 +1238,28 @@ def home():
                 }
             }
             
-            .glow {
-                position: absolute;
-                width: 300px;
-                height: 300px;
-                border-radius: 50%;
-                background: radial-gradient(circle, rgba(255, 0, 255, 0.2) 0%, transparent 70%);
-                filter: blur(60px);
-                animation: float 20s infinite linear;
-                z-index: -1;
-            }
-            
-            @keyframes float {
-                0% { transform: translate(0, 0) rotate(0deg); }
-                25% { transform: translate(100px, 100px) rotate(90deg); }
-                50% { transform: translate(0, 200px) rotate(180deg); }
-                75% { transform: translate(-100px, 100px) rotate(270deg); }
-                100% { transform: translate(0, 0) rotate(360deg); }
+            @media (max-width: 768px) {
+                .container {
+                    padding: 20px;
+                }
+                .logo {
+                    font-size: 3.5rem;
+                }
+                .login-box {
+                    padding: 30px 20px;
+                }
+                .key-input {
+                    padding: 18px;
+                    font-size: 16px;
+                }
+                .login-btn {
+                    padding: 18px;
+                    font-size: 16px;
+                }
             }
         </style>
     </head>
     <body>
-        <div id="particles-js"></div>
-        
-        <!-- Floating glow effects -->
-        <div class="glow" style="top: 10%; left: 10%; animation-delay: 0s; background: radial-gradient(circle, rgba(157, 0, 255, 0.2) 0%, transparent 70%);"></div>
-        <div class="glow" style="top: 60%; right: 10%; animation-delay: -5s; background: radial-gradient(circle, rgba(0, 212, 255, 0.15) 0%, transparent 70%);"></div>
-        <div class="glow" style="bottom: 20%; left: 20%; animation-delay: -10s; background: radial-gradient(circle, rgba(255, 0, 255, 0.15) 0%, transparent 70%);"></div>
-        
         <div class="container">
             <div class="logo">GOBLIN</div>
             <div class="subtitle">Enter your API key to access the dashboard</div>
@@ -1313,43 +1297,7 @@ def home():
             </div>
         </div>
         
-        <script src="https://cdn.jsdelivr.net/particles.js/2.0.0/particles.min.js"></script>
         <script>
-            // Initialize particles
-            particlesJS('particles-js', {
-                particles: {
-                    number: { value: 80, density: { enable: true, value_area: 800 } },
-                    color: { value: ["#ff00ff", "#9d00ff", "#00d4ff"] },
-                    shape: { type: "circle" },
-                    opacity: { value: 0.5, random: true },
-                    size: { value: 3, random: true },
-                    line_linked: {
-                        enable: true,
-                        distance: 150,
-                        color: "#9d00ff",
-                        opacity: 0.2,
-                        width: 1
-                    },
-                    move: {
-                        enable: true,
-                        speed: 2,
-                        direction: "none",
-                        random: true,
-                        straight: false,
-                        out_mode: "out",
-                        bounce: false
-                    }
-                },
-                interactivity: {
-                    detect_on: "canvas",
-                    events: {
-                        onhover: { enable: true, mode: "repulse" },
-                        onclick: { enable: true, mode: "push" }
-                    }
-                },
-                retina_detect: true
-            });
-            
             async function validateKey() {
                 const key = document.getElementById('apiKey').value.trim().toUpperCase();
                 const errorDiv = document.getElementById('errorMessage');
@@ -1391,28 +1339,6 @@ def home():
                     if (data.valid) {
                         btn.innerHTML = '✅ Access Granted';
                         btn.style.background = 'linear-gradient(45deg, #00ff9d, #00d4ff)';
-                        
-                        // Add particles celebration
-                        particlesJS('particles-js', {
-                            particles: {
-                                number: { value: 150, density: { enable: true, value_area: 800 } },
-                                color: { value: ["#00ff9d", "#00d4ff", "#9d00ff"] },
-                                shape: { type: "circle" },
-                                opacity: { value: 0.8, random: true },
-                                size: { value: 4, random: true },
-                                line_linked: { enable: false },
-                                move: {
-                                    enable: true,
-                                    speed: 6,
-                                    direction: "none",
-                                    random: true,
-                                    straight: false,
-                                    out_mode: "out",
-                                    bounce: false
-                                }
-                            },
-                            retina_detect: true
-                        });
                         
                         setTimeout(() => {
                             window.location.href = '/dashboard';
@@ -1579,17 +1505,6 @@ def dashboard():
             color: #fff;
             min-height: 100vh;
             overflow-x: hidden;
-            position: relative;
-        }}
-        
-        #particles-js {{
-            position: fixed;
-            width: 100%;
-            height: 100%;
-            top: 0;
-            left: 0;
-            z-index: -1;
-            background: radial-gradient(ellipse at center, #0a0015 0%, #000000 70%);
         }}
         
         .header {{
@@ -2077,34 +1992,9 @@ def dashboard():
                 padding: 20px;
             }}
         }}
-        
-        .glow {{
-            position: fixed;
-            width: 400px;
-            height: 400px;
-            border-radius: 50%;
-            background: radial-gradient(circle, rgba(255, 0, 255, 0.15) 0%, transparent 70%);
-            filter: blur(80px);
-            animation: float 25s infinite linear;
-            z-index: -1;
-        }}
-        
-        @keyframes float {{
-            0% {{ transform: translate(0, 0) rotate(0deg); }}
-            33% {{ transform: translate(200px, 200px) rotate(120deg); }}
-            66% {{ transform: translate(-200px, 100px) rotate(240deg); }}
-            100% {{ transform: translate(0, 0) rotate(360deg); }}
-        }}
     </style>
 </head>
 <body>
-    <div id="particles-js"></div>
-    
-    <!-- Floating glow effects -->
-    <div class="glow" style="top: 10%; left: 5%; animation-delay: 0s; background: radial-gradient(circle, rgba(157, 0, 255, 0.15) 0%, transparent 70%);"></div>
-    <div class="glow" style="top: 60%; right: 5%; animation-delay: -8s; background: radial-gradient(circle, rgba(0, 212, 255, 0.1) 0%, transparent 70%);"></div>
-    <div class="glow" style="bottom: 10%; left: 30%; animation-delay: -16s; background: radial-gradient(circle, rgba(255, 0, 255, 0.1) 0%, transparent 70%);"></div>
-    
     <div class="header">
         <div class="logo">GOBLIN PROFILE</div>
         <div class="user-info">
@@ -2190,43 +2080,7 @@ def dashboard():
     
     <div class="notification" id="notification"></div>
     
-    <script src="https://cdn.jsdelivr.net/particles.js/2.0.0/particles.min.js"></script>
     <script>
-        // Initialize particles - SIMPLIFIED VERSION
-        particlesJS('particles-js', {{
-            particles: {{
-                number: {{ value: 60, density: {{ enable: true, value_area: 800 }} }},
-                color: {{ value: ["#ff00ff", "#9d00ff", "#00d4ff"] }},
-                shape: {{ type: "circle" }},
-                opacity: {{ value: 0.6, random: true }},
-                size: {{ value: 2, random: true }},
-                line_linked: {{
-                    enable: true,
-                    distance: 120,
-                    color: "#9d00ff",
-                    opacity: 0.3,
-                    width: 1
-                }},
-                move: {{
-                    enable: true,
-                    speed: 1.5,
-                    direction: "none",
-                    random: true,
-                    straight: false,
-                    out_mode: "out",
-                    bounce: false
-                }}
-            }},
-            interactivity: {{
-                detect_on: "canvas",
-                events: {{
-                    onhover: {{ enable: true, mode: "repulse" }},
-                    onclick: {{ enable: true, mode: "push" }}
-                }}
-            }},
-            retina_detect: true
-        }});
-        
         function revealKey() {{
             const display = document.getElementById('apiKeyDisplay');
             display.classList.add('revealed');
@@ -2284,67 +2138,6 @@ def dashboard():
             const notification = document.getElementById('notification');
             notification.textContent = message;
             notification.style.display = 'block';
-            
-            // Add particles effect for success
-            if (message.includes('✅') || message.includes('🔓')) {{
-                particlesJS('particles-js', {{
-                    particles: {{
-                        number: {{ value: 80, density: {{ enable: true, value_area: 800 }} }},
-                        color: {{ value: "#00ff9d" }},
-                        shape: {{ type: "circle" }},
-                        opacity: {{ value: 0.8, random: true }},
-                        size: {{ value: 3, random: true }},
-                        line_linked: {{ enable: false }},
-                        move: {{
-                            enable: true,
-                            speed: 4,
-                            direction: "top",
-                            random: true,
-                            straight: false,
-                            out_mode: "out",
-                            bounce: false
-                        }}
-                    }},
-                    retina_detect: true
-                }});
-                
-                // Reset after 2 seconds
-                setTimeout(() => {{
-                    particlesJS('particles-js', {{
-                        particles: {{
-                            number: {{ value: 60, density: {{ enable: true, value_area: 800 }} }},
-                            color: {{ value: ["#ff00ff", "#9d00ff", "#00d4ff"] }},
-                            shape: {{ type: "circle" }},
-                            opacity: {{ value: 0.6, random: true }},
-                            size: {{ value: 2, random: true }},
-                            line_linked: {{
-                                enable: true,
-                                distance: 120,
-                                color: "#9d00ff",
-                                opacity: 0.3,
-                                width: 1
-                            }},
-                            move: {{
-                                enable: true,
-                                speed: 1.5,
-                                direction: "none",
-                                random: true,
-                                straight: false,
-                                out_mode: "out",
-                                bounce: false
-                            }}
-                        }},
-                        interactivity: {{
-                            detect_on: "canvas",
-                            events: {{
-                                onhover: {{ enable: true, mode: "repulse" }},
-                                onclick: {{ enable: true, mode: "push" }}
-                            }}
-                        }},
-                        retina_detect: true
-                    }});
-                }}, 2000);
-            }}
             
             setTimeout(() => {{
                 notification.style.display = 'none';
@@ -2506,7 +2299,6 @@ if __name__ == '__main__':
     print(f"   • Secure ticket channels")
     
     print(f"\n🎨 UI Features:")
-    print(f"   • Animated particle backgrounds")
     print(f"   • Dark theme with pink/purple accents")
     print(f"   • Profile view with stats")
     print(f"   • Interactive elements with hover effects")
