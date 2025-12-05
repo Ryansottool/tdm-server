@@ -1,4 +1,4 @@
-# app.py - SIMPLE DISCORD BOT & DASHBOARD
+# app.py - ANIMATED DARK MODE BOT DASHBOARD
 import os
 import json
 import sqlite3
@@ -13,7 +13,7 @@ from datetime import datetime
 import logging
 
 app = Flask(__name__)
-app.secret_key = os.environ.get('SECRET_KEY', 'simple-secret-key-change-this')
+app.secret_key = os.environ.get('SECRET_KEY', 'bot-dashboard-secret-key')
 CORS(app)
 DATABASE = 'sot_tdm.db'
 port = int(os.environ.get("PORT", 10000))
@@ -30,7 +30,7 @@ logger = logging.getLogger(__name__)
 bot_active = False
 bot_info = {}
 
-# Simple ping responses
+# Ping responses
 PING_RESPONSES = [
     "I'm here",
     "Bot is up",
@@ -119,10 +119,10 @@ def get_db_connection():
 # =============================================================================
 
 def generate_api_key():
-    """Generate short API key"""
-    timestamp = str(int(time.time()))[-6:]
-    random_str = ''.join(random.choices(string.ascii_uppercase + string.digits, k=6))
-    return f"KEY-{timestamp}{random_str}"
+    """Generate short API key - exactly 12 characters"""
+    # Format: KEY-XXXXXXX (12 chars total)
+    random_str = ''.join(random.choices(string.ascii_uppercase + string.digits, k=8))
+    return f"KEY-{random_str}"  # Total: 4 + 8 = 12 chars
 
 def validate_api_key(api_key):
     """Validate API key"""
@@ -247,7 +247,7 @@ def interactions():
         user_name = data.get('member', {}).get('user', {}).get('global_name', 'Unknown')
         server_id = data.get('guild_id', 'DM')
         
-        logger.info(f"Command: {command} from {user_name} ({user_id})")
+        logger.info(f"Command: {command} from {user_name}")
         
         if command == 'ping':
             response = random.choice(PING_RESPONSES)
@@ -278,7 +278,7 @@ def interactions():
                     "type": 4,
                     "data": {
                         "content": (
-                            f"You're already registered as `{existing['in_game_name']}`\n\n"
+                            f"Already registered as `{existing['in_game_name']}`\n\n"
                             f"**Your API Key:** `{api_key}`\n\n"
                             f"Dashboard: {request.host_url}"
                         ),
@@ -286,7 +286,7 @@ def interactions():
                     }
                 })
             
-            # Generate short API key
+            # Generate short API key (12 chars)
             api_key = generate_api_key()
             
             # Register player
@@ -306,7 +306,7 @@ def interactions():
                         f"✅ **Registered Successfully**\n\n"
                         f"**Name:** `{in_game_name}`\n"
                         f"**API Key:** `{api_key}`\n\n"
-                        f"**Web Dashboard:** {request.host_url}\n"
+                        f"**Dashboard:** {request.host_url}\n"
                         f"Use this key to login to your dashboard"
                     ),
                     "flags": 64
@@ -322,12 +322,12 @@ def interactions():
     })
 
 # =============================================================================
-# WEB INTERFACE
+# WEB INTERFACE - ANIMATED DARK MODE
 # =============================================================================
 
 @app.route('/')
 def home():
-    """Main page - Simple key entry"""
+    """Main page - Animated dark mode login"""
     if 'user_key' in session:
         user_data = validate_api_key(session['user_key'])
         if user_data:
@@ -349,160 +349,339 @@ def home():
             
             body {
                 font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
-                background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+                background: #0a0a0a;
                 color: white;
                 min-height: 100vh;
+                overflow: hidden;
+                position: relative;
+            }
+            
+            /* Animated background */
+            .bg-animation {
+                position: fixed;
+                top: 0;
+                left: 0;
+                width: 100%;
+                height: 100%;
+                z-index: -1;
+            }
+            
+            .dot {
+                position: absolute;
+                background: linear-gradient(45deg, #6366f1, #8b5cf6);
+                border-radius: 50%;
+                animation: float 20s infinite linear;
+            }
+            
+            @keyframes float {
+                0% {
+                    transform: translate(0, 0) rotate(0deg);
+                    opacity: 0;
+                }
+                10% {
+                    opacity: 0.6;
+                }
+                90% {
+                    opacity: 0.6;
+                }
+                100% {
+                    transform: translate(calc(100vw * var(--tx)), calc(100vh * var(--ty))) rotate(360deg);
+                    opacity: 0;
+                }
+            }
+            
+            .container {
+                width: 100%;
+                max-width: 450px;
+                margin: 0 auto;
+                padding: 30px;
                 display: flex;
-                justify-content: center;
                 align-items: center;
-                padding: 20px;
+                justify-content: center;
+                min-height: 100vh;
             }
             
             .login-card {
-                background: rgba(255, 255, 255, 0.1);
-                backdrop-filter: blur(10px);
-                border-radius: 20px;
-                padding: 40px;
+                background: rgba(20, 20, 30, 0.8);
+                backdrop-filter: blur(20px);
+                border-radius: 24px;
+                padding: 50px 40px;
                 width: 100%;
-                max-width: 400px;
                 text-align: center;
-                box-shadow: 0 20px 60px rgba(0, 0, 0, 0.3);
-                border: 1px solid rgba(255, 255, 255, 0.2);
+                border: 1px solid rgba(99, 102, 241, 0.2);
+                box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.5);
+                position: relative;
+                overflow: hidden;
+                animation: slideUp 0.6s ease-out;
+            }
+            
+            @keyframes slideUp {
+                from {
+                    opacity: 0;
+                    transform: translateY(30px);
+                }
+                to {
+                    opacity: 1;
+                    transform: translateY(0);
+                }
+            }
+            
+            .login-card::before {
+                content: '';
+                position: absolute;
+                top: 0;
+                left: 0;
+                right: 0;
+                height: 3px;
+                background: linear-gradient(90deg, #6366f1, #8b5cf6, #ec4899);
+                animation: gradientMove 3s infinite linear;
+            }
+            
+            @keyframes gradientMove {
+                0% { background-position: 0% 50%; }
+                100% { background-position: 100% 50%; }
             }
             
             h1 {
-                font-size: 2rem;
+                font-size: 2.5rem;
+                font-weight: 800;
                 margin-bottom: 10px;
-                font-weight: 600;
+                background: linear-gradient(45deg, #6366f1, #8b5cf6);
+                -webkit-background-clip: text;
+                -webkit-text-fill-color: transparent;
+                background-size: 200% 200%;
+                animation: gradientShift 4s ease infinite;
+            }
+            
+            @keyframes gradientShift {
+                0%, 100% { background-position: 0% 50%; }
+                50% { background-position: 100% 50%; }
             }
             
             .subtitle {
-                color: rgba(255, 255, 255, 0.8);
-                margin-bottom: 30px;
-                line-height: 1.5;
+                color: #94a3b8;
+                margin-bottom: 40px;
+                font-size: 1.1rem;
+                line-height: 1.6;
             }
             
             .key-input {
                 width: 100%;
-                padding: 15px;
-                background: rgba(255, 255, 255, 0.1);
-                border: 2px solid rgba(255, 255, 255, 0.3);
-                border-radius: 10px;
+                padding: 18px;
+                background: rgba(30, 30, 40, 0.8);
+                border: 2px solid rgba(99, 102, 241, 0.3);
+                border-radius: 12px;
                 color: white;
-                font-size: 16px;
+                font-size: 18px;
+                font-family: monospace;
+                letter-spacing: 2px;
                 text-align: center;
-                margin-bottom: 20px;
+                margin-bottom: 25px;
                 transition: all 0.3s;
+                text-transform: uppercase;
             }
             
             .key-input:focus {
                 outline: none;
-                border-color: rgba(255, 255, 255, 0.6);
-                background: rgba(255, 255, 255, 0.15);
+                border-color: #6366f1;
+                box-shadow: 0 0 0 4px rgba(99, 102, 241, 0.2);
+                background: rgba(30, 30, 40, 0.9);
+                transform: scale(1.02);
             }
             
             .key-input::placeholder {
-                color: rgba(255, 255, 255, 0.6);
+                color: #64748b;
             }
             
             .login-btn {
                 width: 100%;
-                padding: 15px;
-                background: white;
-                color: #667eea;
+                padding: 18px;
+                background: linear-gradient(45deg, #6366f1, #8b5cf6);
+                color: white;
                 border: none;
-                border-radius: 10px;
-                font-size: 16px;
+                border-radius: 12px;
+                font-size: 18px;
                 font-weight: 600;
                 cursor: pointer;
                 transition: all 0.3s;
+                position: relative;
+                overflow: hidden;
             }
             
             .login-btn:hover {
-                transform: translateY(-2px);
-                box-shadow: 0 10px 30px rgba(0, 0, 0, 0.2);
+                transform: translateY(-3px);
+                box-shadow: 0 15px 30px rgba(99, 102, 241, 0.3);
             }
             
             .login-btn:active {
-                transform: translateY(0);
+                transform: translateY(-1px);
             }
             
-            .error-message {
-                background: rgba(255, 59, 48, 0.2);
-                border: 1px solid rgba(255, 59, 48, 0.4);
-                border-radius: 8px;
-                padding: 12px;
+            .login-btn::after {
+                content: '';
+                position: absolute;
+                top: -50%;
+                left: -50%;
+                width: 200%;
+                height: 200%;
+                background: linear-gradient(45deg, transparent, rgba(255, 255, 255, 0.1), transparent);
+                transform: rotate(45deg);
+                transition: all 0.5s;
+            }
+            
+            .login-btn:hover::after {
+                left: 100%;
+            }
+            
+            .error-box {
+                background: rgba(239, 68, 68, 0.1);
+                border: 2px solid rgba(239, 68, 68, 0.4);
+                border-radius: 12px;
+                padding: 16px;
                 margin-top: 20px;
-                color: #ffcccb;
+                color: #fca5a5;
                 font-size: 14px;
                 display: none;
+                animation: shake 0.5s;
+            }
+            
+            @keyframes shake {
+                0%, 100% { transform: translateX(0); }
+                25% { transform: translateX(-5px); }
+                75% { transform: translateX(5px); }
             }
             
             .info-box {
-                background: rgba(255, 255, 255, 0.1);
-                border-radius: 10px;
-                padding: 20px;
-                margin-top: 30px;
+                background: rgba(99, 102, 241, 0.1);
+                border: 2px solid rgba(99, 102, 241, 0.3);
+                border-radius: 12px;
+                padding: 25px;
+                margin-top: 35px;
                 text-align: left;
                 font-size: 14px;
+                color: #cbd5e1;
             }
             
             .info-box strong {
                 display: block;
-                margin-bottom: 10px;
+                margin-bottom: 15px;
                 color: white;
+                font-size: 16px;
             }
             
             .info-box code {
-                background: rgba(0, 0, 0, 0.3);
-                padding: 3px 6px;
-                border-radius: 4px;
+                background: rgba(0, 0, 0, 0.4);
+                padding: 4px 8px;
+                border-radius: 6px;
                 font-family: monospace;
+                color: #6366f1;
+                margin: 0 2px;
+            }
+            
+            .bot-status {
+                display: inline-block;
+                padding: 10px 20px;
+                background: rgba(30, 30, 40, 0.8);
+                border: 2px solid rgba(99, 102, 241, 0.3);
+                border-radius: 20px;
+                margin-top: 25px;
+                font-size: 14px;
+                animation: pulse 2s infinite;
+            }
+            
+            @keyframes pulse {
+                0%, 100% { opacity: 1; }
+                50% { opacity: 0.7; }
+            }
+            
+            .status-online {
+                color: #10b981;
+                border-color: rgba(16, 185, 129, 0.3);
+            }
+            
+            .status-offline {
+                color: #ef4444;
+                border-color: rgba(239, 68, 68, 0.3);
             }
             
             @media (max-width: 768px) {
+                .container {
+                    padding: 20px;
+                }
                 .login-card {
-                    padding: 30px 20px;
+                    padding: 40px 25px;
                 }
                 h1 {
-                    font-size: 1.5rem;
+                    font-size: 2rem;
+                }
+                .key-input {
+                    font-size: 16px;
+                    padding: 16px;
                 }
             }
         </style>
     </head>
     <body>
-        <div class="login-card">
-            <h1>Bot Dashboard</h1>
-            <div class="subtitle">
-                Enter your API key to access your dashboard
-            </div>
-            
-            <input type="text" 
-                   class="key-input" 
-                   id="apiKey" 
-                   placeholder="KEY-XXXXXXXX"
-                   autocomplete="off"
-                   spellcheck="false"
-                   maxlength="15">
-            
-            <button class="login-btn" onclick="validateKey()">
-                Access Dashboard
-            </button>
-            
-            <div class="error-message" id="errorMessage">
-                Invalid API key
-            </div>
-            
-            <div class="info-box">
-                <strong>How to get your API key:</strong>
-                <p>1. Add bot to your Discord server</p>
-                <p>2. Type: <code>/register your_name</code></p>
-                <p>3. Copy your <code>KEY-XXXXXX</code> key</p>
-                <p>4. Enter it above to access your dashboard</p>
+        <!-- Animated background -->
+        <div class="bg-animation" id="bgAnimation"></div>
+        
+        <div class="container">
+            <div class="login-card">
+                <h1>Bot Dashboard</h1>
+                <div class="subtitle">
+                    Enter your API key to access your personal dashboard
+                </div>
+                
+                <input type="text" 
+                       class="key-input" 
+                       id="apiKey" 
+                       placeholder="KEY-XXXXXXXX"
+                       autocomplete="off"
+                       spellcheck="false"
+                       maxlength="12">
+                
+                <button class="login-btn" onclick="validateKey()">
+                    Access Dashboard
+                </button>
+                
+                <div class="error-box" id="errorMessage">
+                    Invalid API key
+                </div>
+                
+                <div class="info-box">
+                    <strong>How to get your API key:</strong>
+                    <p>1. Add bot to your Discord server</p>
+                    <p>2. Type: <code>/register your_name</code></p>
+                    <p>3. Copy your <code>KEY-XXXXXXXX</code> key</p>
+                    <p>4. Enter it above to access your dashboard</p>
+                </div>
+                
+                <div class="bot-status" id="botStatus">
+                    Bot Status: Checking...
+                </div>
             </div>
         </div>
         
         <script>
+            // Initialize animated background
+            function initBackground() {
+                const container = document.getElementById('bgAnimation');
+                for (let i = 0; i < 30; i++) {
+                    const dot = document.createElement('div');
+                    dot.className = 'dot';
+                    const size = Math.random() * 3 + 1;
+                    dot.style.width = dot.style.height = size + 'px';
+                    dot.style.left = Math.random() * 100 + '%';
+                    dot.style.top = Math.random() * 100 + '%';
+                    dot.style.opacity = Math.random() * 0.4 + 0.1;
+                    dot.style.setProperty('--tx', Math.random() * 2 - 1);
+                    dot.style.setProperty('--ty', Math.random() * 2 - 1);
+                    dot.style.animationDelay = Math.random() * 5 + 's';
+                    dot.style.animationDuration = Math.random() * 15 + 15 + 's';
+                    container.appendChild(dot);
+                }
+            }
+            
             async function validateKey() {
                 const key = document.getElementById('apiKey').value.trim().toUpperCase();
                 const errorDiv = document.getElementById('errorMessage');
@@ -537,8 +716,10 @@ def home():
                     const data = await response.json();
                     
                     if (data.valid) {
-                        // Success
+                        // Success animation
                         btn.innerHTML = '✅ Access Granted';
+                        btn.style.background = 'linear-gradient(45deg, #10b981, #34d399)';
+                        
                         setTimeout(() => {
                             window.location.href = '/dashboard';
                         }, 500);
@@ -564,16 +745,38 @@ def home():
                 }
             });
             
-            // Auto-format key
+            // Auto-format key (12 chars max)
             document.getElementById('apiKey').addEventListener('input', function(e) {
                 let value = e.target.value.toUpperCase().replace(/[^A-Z0-9\-]/g, '');
-                if (value.length > 15) value = value.substring(0, 15);
+                if (value.length > 12) value = value.substring(0, 12);
                 e.target.value = value;
             });
             
-            // Focus on input when page loads
+            // Check bot status
+            async function checkBotStatus() {
+                try {
+                    const response = await fetch('/health');
+                    const data = await response.json();
+                    const statusElement = document.getElementById('botStatus');
+                    
+                    if (data.bot_active) {
+                        statusElement.innerHTML = '✅ Bot Status: ONLINE';
+                        statusElement.className = 'bot-status status-online';
+                    } else {
+                        statusElement.innerHTML = '❌ Bot Status: OFFLINE';
+                        statusElement.className = 'bot-status status-offline';
+                    }
+                } catch (error) {
+                    document.getElementById('botStatus').innerHTML = '⚠️ Bot Status: ERROR';
+                }
+            }
+            
+            // Initialize
             document.addEventListener('DOMContentLoaded', function() {
+                initBackground();
+                checkBotStatus();
                 document.getElementById('apiKey').focus();
+                setInterval(checkBotStatus, 30000);
             });
         </script>
     </body>
@@ -588,6 +791,10 @@ def api_validate_key():
     
     if not api_key:
         return jsonify({"valid": False, "error": "No key provided"})
+    
+    # Validate length
+    if len(api_key) != 12:
+        return jsonify({"valid": False, "error": "Key must be 12 characters"})
     
     user_data = validate_api_key(api_key)
     
@@ -606,7 +813,7 @@ def logout():
 
 @app.route('/dashboard')
 def dashboard():
-    """User dashboard"""
+    """Animated dark mode dashboard"""
     if 'user_key' not in session:
         return redirect(url_for('home'))
     
@@ -614,9 +821,14 @@ def dashboard():
     if not user_data:
         return redirect(url_for('home'))
     
+    # Generate stats
     kd = user_data.get('total_kills', 0) / max(user_data.get('total_deaths', 1), 1)
     total_games = user_data.get('wins', 0) + user_data.get('losses', 0)
     win_rate = (user_data.get('wins', 0) / total_games * 100) if total_games > 0 else 0
+    
+    # Color based on KD
+    kd_color = '#10b981' if kd >= 1.5 else '#f59e0b' if kd >= 1 else '#ef4444'
+    win_color = '#10b981' if win_rate >= 60 else '#f59e0b' if win_rate >= 40 else '#ef4444'
     
     return f'''
     <!DOCTYPE html>
@@ -634,43 +846,81 @@ def dashboard():
             
             body {{
                 font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
-                background: #f5f5f7;
-                color: #1d1d1f;
+                background: #0a0a0a;
+                color: white;
                 min-height: 100vh;
+                position: relative;
+                overflow-x: hidden;
             }}
             
+            /* Animated background */
+            .bg-animation {{
+                position: fixed;
+                top: 0;
+                left: 0;
+                width: 100%;
+                height: 100%;
+                z-index: -1;
+                opacity: 0.3;
+            }}
+            
+            .bg-dot {{
+                position: absolute;
+                background: rgba(99, 102, 241, 0.2);
+                border-radius: 50%;
+                animation: floatBg 40s infinite linear;
+            }}
+            
+            @keyframes floatBg {{
+                0% {{ transform: translateY(0) rotate(0deg); }}
+                100% {{ transform: translateY(-100vh) rotate(360deg); }}
+            }}
+            
+            /* Glass morphism header */
             .header {{
-                background: white;
-                border-bottom: 1px solid #e5e5e7;
-                padding: 20px 40px;
+                background: rgba(20, 20, 30, 0.8);
+                backdrop-filter: blur(20px);
+                border-bottom: 1px solid rgba(99, 102, 241, 0.2);
+                padding: 25px 40px;
                 display: flex;
                 justify-content: space-between;
                 align-items: center;
                 position: sticky;
                 top: 0;
                 z-index: 100;
-                box-shadow: 0 2px 10px rgba(0, 0, 0, 0.05);
             }}
             
             .logo {{
-                font-size: 1.5rem;
-                font-weight: 600;
-                color: #007AFF;
+                font-size: 1.8rem;
+                font-weight: 700;
+                background: linear-gradient(45deg, #6366f1, #8b5cf6);
+                -webkit-background-clip: text;
+                -webkit-text-fill-color: transparent;
             }}
             
             .user-info {{
                 display: flex;
                 align-items: center;
-                gap: 20px;
+                gap: 25px;
+            }}
+            
+            .user-name {{
+                font-size: 1.1rem;
+                font-weight: 600;
+            }}
+            
+            .user-level {{
+                font-size: 0.9rem;
+                color: #94a3b8;
             }}
             
             .logout-btn {{
-                padding: 8px 16px;
-                background: #FF3B30;
+                padding: 10px 24px;
+                background: linear-gradient(45deg, #ef4444, #dc2626);
                 color: white;
                 border: none;
-                border-radius: 8px;
-                font-weight: 500;
+                border-radius: 10px;
+                font-weight: 600;
                 cursor: pointer;
                 transition: all 0.3s;
                 text-decoration: none;
@@ -678,8 +928,8 @@ def dashboard():
             }}
             
             .logout-btn:hover {{
-                background: #FF453A;
-                transform: translateY(-1px);
+                transform: translateY(-3px);
+                box-shadow: 0 10px 25px rgba(239, 68, 68, 0.3);
             }}
             
             .container {{
@@ -688,218 +938,349 @@ def dashboard():
                 padding: 40px;
             }}
             
-            .welcome-section {{
-                background: white;
-                border-radius: 16px;
-                padding: 40px;
-                margin-bottom: 30px;
-                box-shadow: 0 4px 20px rgba(0, 0, 0, 0.05);
+            /* Welcome card with animation */
+            .welcome-card {{
+                background: linear-gradient(135deg, rgba(30, 30, 40, 0.8), rgba(20, 20, 30, 0.8));
+                backdrop-filter: blur(20px);
+                border-radius: 24px;
+                padding: 50px;
+                margin-bottom: 40px;
+                border: 1px solid rgba(99, 102, 241, 0.2);
+                box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.5);
+                position: relative;
+                overflow: hidden;
+                animation: slideUp 0.8s ease-out;
             }}
             
-            .welcome-section h1 {{
-                font-size: 2rem;
-                margin-bottom: 10px;
-                color: #1d1d1f;
+            .welcome-card::before {{
+                content: '';
+                position: absolute;
+                top: 0;
+                left: 0;
+                right: 0;
+                height: 3px;
+                background: linear-gradient(90deg, #6366f1, #8b5cf6, #ec4899);
+                animation: gradientMove 3s infinite linear;
             }}
             
-            .welcome-section p {{
-                color: #86868b;
+            .welcome-card h1 {{
+                font-size: 2.5rem;
+                margin-bottom: 15px;
+                background: linear-gradient(45deg, white, #cbd5e1);
+                -webkit-background-clip: text;
+                -webkit-text-fill-color: transparent;
+            }}
+            
+            .welcome-card p {{
+                color: #94a3b8;
+                font-size: 1.2rem;
                 line-height: 1.6;
             }}
             
+            /* Stats grid with hover effects */
             .stats-grid {{
                 display: grid;
-                grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
-                gap: 20px;
-                margin-bottom: 40px;
+                grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+                gap: 25px;
+                margin-bottom: 50px;
             }}
             
             .stat-card {{
-                background: white;
-                border-radius: 12px;
-                padding: 30px;
+                background: linear-gradient(135deg, rgba(30, 30, 40, 0.8), rgba(20, 20, 30, 0.8));
+                backdrop-filter: blur(20px);
+                border-radius: 20px;
+                padding: 35px;
                 text-align: center;
-                transition: all 0.3s;
-                box-shadow: 0 4px 15px rgba(0, 0, 0, 0.05);
+                border: 1px solid rgba(99, 102, 241, 0.1);
+                transition: all 0.4s;
+                position: relative;
+                overflow: hidden;
             }}
             
             .stat-card:hover {{
-                transform: translateY(-5px);
-                box-shadow: 0 8px 25px rgba(0, 0, 0, 0.1);
+                transform: translateY(-10px) scale(1.02);
+                border-color: rgba(99, 102, 241, 0.3);
+                box-shadow: 0 20px 40px rgba(99, 102, 241, 0.2);
+            }}
+            
+            .stat-card::before {{
+                content: '';
+                position: absolute;
+                top: 0;
+                left: 0;
+                right: 0;
+                height: 3px;
+                background: linear-gradient(90deg, #6366f1, #8b5cf6);
             }}
             
             .stat-value {{
-                font-size: 2.5rem;
-                font-weight: 700;
-                margin: 10px 0;
-                color: #007AFF;
+                font-size: 3.5rem;
+                font-weight: 800;
+                margin: 20px 0;
+                font-family: 'Segoe UI', sans-serif;
             }}
             
             .stat-label {{
-                color: #86868b;
-                font-size: 0.9rem;
+                color: #94a3b8;
+                font-size: 0.95rem;
                 text-transform: uppercase;
-                letter-spacing: 1px;
+                letter-spacing: 2px;
+                margin-bottom: 10px;
             }}
             
+            .stat-details {{
+                color: #cbd5e1;
+                font-size: 1rem;
+            }}
+            
+            /* Key section */
             .key-section {{
-                background: white;
-                border-radius: 16px;
-                padding: 40px;
+                background: linear-gradient(135deg, rgba(30, 30, 40, 0.8), rgba(20, 20, 30, 0.8));
+                backdrop-filter: blur(20px);
+                border-radius: 24px;
+                padding: 50px;
                 margin-top: 40px;
-                box-shadow: 0 4px 20px rgba(0, 0, 0, 0.05);
+                border: 1px solid rgba(99, 102, 241, 0.2);
+                box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.5);
+                position: relative;
+                overflow: hidden;
+            }}
+            
+            .key-section::before {{
+                content: '';
+                position: absolute;
+                top: 0;
+                left: 0;
+                right: 0;
+                height: 3px;
+                background: linear-gradient(90deg, #10b981, #34d399);
             }}
             
             .key-display {{
-                background: #f5f5f7;
-                border: 2px solid #e5e5e7;
-                border-radius: 10px;
-                padding: 20px;
-                margin: 20px 0;
+                background: rgba(10, 10, 15, 0.6);
+                border: 2px solid rgba(99, 102, 241, 0.3);
+                border-radius: 16px;
+                padding: 25px;
+                margin: 30px 0;
                 font-family: monospace;
-                font-size: 1.2rem;
-                color: #1d1d1f;
+                font-size: 1.4rem;
+                color: #6366f1;
                 text-align: center;
-                letter-spacing: 1px;
+                letter-spacing: 3px;
                 cursor: pointer;
                 transition: all 0.3s;
+                word-break: break-all;
             }}
             
             .key-display:hover {{
-                background: #e8e8ed;
-                border-color: #007AFF;
+                background: rgba(10, 10, 15, 0.8);
+                border-color: #6366f1;
+                box-shadow: 0 0 30px rgba(99, 102, 241, 0.3);
+                transform: scale(1.02);
             }}
             
+            /* Action buttons */
             .action-buttons {{
                 display: flex;
-                gap: 15px;
-                margin-top: 30px;
+                gap: 20px;
+                margin-top: 40px;
                 flex-wrap: wrap;
             }}
             
             .action-btn {{
-                padding: 12px 24px;
-                background: #007AFF;
+                padding: 16px 32px;
+                background: linear-gradient(45deg, #6366f1, #8b5cf6);
                 color: white;
                 border: none;
-                border-radius: 10px;
-                font-weight: 500;
+                border-radius: 12px;
+                font-weight: 600;
+                font-size: 16px;
                 cursor: pointer;
                 transition: all 0.3s;
                 text-decoration: none;
                 display: inline-flex;
                 align-items: center;
-                gap: 8px;
+                gap: 12px;
+                flex: 1;
+                min-width: 200px;
+                justify-content: center;
             }}
             
             .action-btn:hover {{
-                background: #0056CC;
-                transform: translateY(-2px);
+                transform: translateY(-5px);
+                box-shadow: 0 15px 30px rgba(99, 102, 241, 0.3);
             }}
             
             .action-btn.secondary {{
-                background: #8e8e93;
+                background: linear-gradient(45deg, #6b7280, #4b5563);
             }}
             
             .action-btn.secondary:hover {{
-                background: #6e6e73;
+                box-shadow: 0 15px 30px rgba(107, 114, 128, 0.3);
             }}
             
+            .action-btn.danger {{
+                background: linear-gradient(45deg, #ef4444, #dc2626);
+            }}
+            
+            .action-btn.danger:hover {{
+                box-shadow: 0 15px 30px rgba(239, 68, 68, 0.3);
+            }}
+            
+            /* Floating notification */
+            .notification {{
+                position: fixed;
+                bottom: 30px;
+                right: 30px;
+                background: linear-gradient(45deg, #10b981, #34d399);
+                color: white;
+                padding: 20px 30px;
+                border-radius: 12px;
+                box-shadow: 0 10px 30px rgba(16, 185, 129, 0.3);
+                z-index: 1000;
+                display: none;
+                animation: slideInRight 0.5s ease-out;
+            }}
+            
+            @keyframes slideInRight {{
+                from {{ transform: translateX(100%); opacity: 0; }}
+                to {{ transform: translateX(0); opacity: 1; }}
+            }}
+            
+            /* Responsive */
             @media (max-width: 768px) {{
                 .header {{
                     flex-direction: column;
-                    gap: 15px;
+                    gap: 20px;
                     text-align: center;
                     padding: 20px;
                 }}
                 .container {{
                     padding: 20px;
                 }}
+                .welcome-card, .key-section {{
+                    padding: 30px 20px;
+                }}
+                .welcome-card h1 {{
+                    font-size: 2rem;
+                }}
                 .stats-grid {{
                     grid-template-columns: 1fr;
                 }}
-                .welcome-section, .key-section {{
+                .stat-card {{
                     padding: 30px 20px;
                 }}
                 .action-buttons {{
                     flex-direction: column;
                 }}
+                .action-btn {{
+                    min-width: 100%;
+                }}
+                .key-display {{
+                    font-size: 1.2rem;
+                    padding: 20px;
+                }}
             }}
         </style>
     </head>
     <body>
+        <!-- Animated background -->
+        <div class="bg-animation" id="bgAnimation"></div>
+        
         <div class="header">
-            <div class="logo">Bot Dashboard</div>
+            <div class="logo">Dashboard</div>
             <div class="user-info">
                 <div>
-                    <strong>{user_data.get('in_game_name', 'User')}</strong>
-                    <div style="font-size: 0.9rem; color: #86868b;">Level {user_data.get('prestige', 0)}</div>
+                    <div class="user-name">{user_data.get('in_game_name', 'Player')}</div>
+                    <div class="user-level">Level {user_data.get('prestige', 0)} • {user_data.get('credits', 1000)} credits</div>
                 </div>
                 <a href="/logout" class="logout-btn">Logout</a>
             </div>
         </div>
         
         <div class="container">
-            <div class="welcome-section">
+            <div class="welcome-card">
                 <h1>Welcome back, {user_data.get('in_game_name', 'Player')}</h1>
-                <p>Here are your current stats and information.</p>
+                <p>Your stats and information are updated in real-time. Keep playing to improve your rankings!</p>
             </div>
             
             <div class="stats-grid">
                 <div class="stat-card">
                     <div class="stat-label">K/D Ratio</div>
-                    <div class="stat-value">{kd:.2f}</div>
-                    <div>{user_data.get('total_kills', 0)} kills / {user_data.get('total_deaths', 0)} deaths</div>
+                    <div class="stat-value" style="color: {kd_color};">{kd:.2f}</div>
+                    <div class="stat-details">{user_data.get('total_kills', 0)} kills / {user_data.get('total_deaths', 0)} deaths</div>
                 </div>
                 
                 <div class="stat-card">
                     <div class="stat-label">Win Rate</div>
-                    <div class="stat-value">{win_rate:.1f}%</div>
-                    <div>{user_data.get('wins', 0)} wins / {user_data.get('losses', 0)} losses</div>
-                </div>
-                
-                <div class="stat-card">
-                    <div class="stat-label">Credits</div>
-                    <div class="stat-value">${user_data.get('credits', 1000)}</div>
-                    <div>Available balance</div>
+                    <div class="stat-value" style="color: {win_color};">{win_rate:.1f}%</div>
+                    <div class="stat-details">{user_data.get('wins', 0)} wins / {user_data.get('losses', 0)} losses</div>
                 </div>
                 
                 <div class="stat-card">
                     <div class="stat-label">Games Played</div>
-                    <div class="stat-value">{total_games}</div>
-                    <div>Total matches</div>
+                    <div class="stat-value" style="color: #6366f1;">{total_games}</div>
+                    <div class="stat-details">Total matches completed</div>
+                </div>
+                
+                <div class="stat-card">
+                    <div class="stat-label">Credits</div>
+                    <div class="stat-value" style="color: #f59e0b;">${user_data.get('credits', 1000)}</div>
+                    <div class="stat-details">Available balance</div>
                 </div>
             </div>
             
             <div class="key-section">
-                <h2 style="margin-bottom: 20px; color: #1d1d1f;">Your API Key</h2>
-                <div class="key-display" onclick="copyKey()">
-                    {session['user_key']}
-                    <div style="font-size: 0.8rem; color: #86868b; margin-top: 10px;">Click to copy</div>
-                </div>
-                
-                <p style="color: #86868b; margin: 20px 0;">
+                <h2 style="margin-bottom: 10px; font-size: 1.8rem;">Your API Key</h2>
+                <p style="color: #94a3b8; margin-bottom: 20px;">
                     Use this key to access the bot API. Keep it secure and don't share it with anyone.
                 </p>
+                
+                <div class="key-display" onclick="copyKey()">
+                    {session['user_key']}
+                    <div style="font-size: 0.9rem; color: #64748b; margin-top: 15px;">
+                        Click to copy to clipboard
+                    </div>
+                </div>
                 
                 <div class="action-buttons">
                     <button class="action-btn" onclick="refreshStats()">
                         <span>🔄</span> Refresh Stats
                     </button>
-                    <button class="action-btn" onclick="viewApiDocs()">
+                    <button class="action-btn secondary" onclick="viewApiDocs()">
                         <span>📖</span> API Documentation
                     </button>
-                    <button class="action-btn secondary" onclick="getNewKey()">
+                    <button class="action-btn danger" onclick="getNewKey()">
                         <span>🔑</span> Generate New Key
                     </button>
                 </div>
             </div>
         </div>
         
+        <!-- Notification -->
+        <div class="notification" id="notification"></div>
+        
         <script>
+            // Initialize animated background
+            function initBackground() {{
+                const container = document.getElementById('bgAnimation');
+                for (let i = 0; i < 20; i++) {{
+                    const dot = document.createElement('div');
+                    dot.className = 'bg-dot';
+                    const size = Math.random() * 100 + 50;
+                    dot.style.width = dot.style.height = size + 'px';
+                    dot.style.left = Math.random() * 100 + '%';
+                    dot.style.top = '100vh';
+                    dot.style.opacity = Math.random() * 0.1 + 0.05;
+                    dot.style.animationDelay = Math.random() * 20 + 's';
+                    dot.style.animationDuration = Math.random() * 30 + 30 + 's';
+                    container.appendChild(dot);
+                }}
+            }}
+            
             function copyKey() {{
                 navigator.clipboard.writeText("{session['user_key']}");
-                alert("Key copied to clipboard");
+                showNotification("✅ Key copied to clipboard");
             }}
             
             async function refreshStats() {{
@@ -907,37 +1288,70 @@ def dashboard():
                     const response = await fetch('/api/refresh-stats?key={session['user_key']}');
                     const data = await response.json();
                     if (data.success) {{
-                        alert("Stats refreshed!");
-                        location.reload();
+                        showNotification("✅ Stats refreshed!");
+                        setTimeout(() => location.reload(), 1000);
                     }}
                 }} catch (error) {{
-                    alert("Error refreshing stats");
+                    showNotification("❌ Error refreshing stats");
                 }}
             }}
             
             function viewApiDocs() {{
-                alert("API Documentation:\\n\\n" +
+                showNotification("📚 API Documentation loaded in console");
+                console.log("API Documentation:\\n\\n" +
                       "GET /api/profile?key=YOUR_KEY - Get your profile\\n" +
                       "GET /api/stats - Get global statistics\\n" +
-                      "GET /health - Check service status");
+                      "GET /health - Check service status\\n" +
+                      "POST /api/new-key?key=YOUR_KEY - Generate new API key");
             }}
             
             async function getNewKey() {{
-                if (confirm("Generate a new API key? Your old key will stop working.")) {{
+                if (confirm("Generate a new API key? Your old key will stop working immediately.")) {{
                     try {{
                         const response = await fetch('/api/new-key?key={session['user_key']}', {{
                             method: 'POST'
                         }});
                         const data = await response.json();
                         if (data.success) {{
-                            alert("New key generated! Please login again.");
-                            window.location.href = '/logout';
+                            showNotification("✅ New key generated! Redirecting to login...");
+                            setTimeout(() => window.location.href = '/logout', 1500);
                         }}
                     }} catch (error) {{
-                        alert("Error generating new key");
+                        showNotification("❌ Error generating new key");
                     }}
                 }}
             }}
+            
+            function showNotification(message) {{
+                const notification = document.getElementById('notification');
+                notification.textContent = message;
+                notification.style.display = 'block';
+                
+                setTimeout(() => {{
+                    notification.style.display = 'none';
+                }}, 3000);
+            }}
+            
+            // Add hover effects to stat cards
+            document.addEventListener('DOMContentLoaded', function() {{
+                initBackground();
+                
+                const statCards = document.querySelectorAll('.stat-card');
+                statCards.forEach(card => {{
+                    card.addEventListener('mouseenter', () => {{
+                        card.style.transform = 'translateY(-10px) scale(1.02)';
+                    }});
+                    
+                    card.addEventListener('mouseleave', () => {{
+                        card.style.transform = '';
+                    }});
+                }});
+                
+                // Auto-refresh stats every 60 seconds
+                setInterval(() => {{
+                    refreshStats();
+                }}, 60000);
+            }});
         </script>
     </body>
     </html>
@@ -971,7 +1385,7 @@ def api_new_key():
     if not user_data:
         return jsonify({"error": "Invalid key"}), 401
     
-    # Generate new key
+    # Generate new key (12 chars)
     new_key = generate_api_key()
     
     conn = get_db_connection()
@@ -1023,6 +1437,7 @@ def health():
         "status": "healthy" if bot_active else "offline",
         "bot_active": bot_active,
         "service": "Bot Dashboard",
+        "version": "2.0",
         "timestamp": datetime.utcnow().isoformat()
     })
 
@@ -1035,7 +1450,7 @@ if __name__ == '__main__':
     init_db()
     
     print(f"\n{'='*60}")
-    print("🤖 SIMPLE BOT DASHBOARD")
+    print("🌙 ANIMATED DARK MODE BOT DASHBOARD")
     print(f"{'='*60}")
     
     # Test Discord connection
@@ -1055,13 +1470,19 @@ if __name__ == '__main__':
     
     print(f"\n🎮 Discord Commands:")
     print(f"   /ping - Check if bot is online")
-    print(f"   /register [name] - Get API key")
+    print(f"   /register [name] - Get API key (KEY-XXXXXXXX)")
     
-    print(f"\n📱 API Key Format: KEY-XXXXXXXX (short)")
-    print(f"\n💡 Get started:")
-    print(f"   1. Add bot to Discord server")
-    print(f"   2. Use /register in Discord to get key")
-    print(f"   3. Enter key on website to access dashboard")
+    print(f"\n🔑 API Key Format: KEY-XXXXXXXX (12 characters)")
+    print(f"   • Exactly 12 characters")
+    print(f"   • Starts with KEY-")
+    print(f"   • 8 random characters")
+    
+    print(f"\n✨ Features:")
+    print(f"   • Animated dark mode interface")
+    print(f"   • Real-time stats")
+    print(f"   • Glass morphism design")
+    print(f"   • Hover animations")
+    print(f"   • Mobile responsive")
     
     print(f"\n{'='*60}\n")
     
