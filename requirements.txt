@@ -1,13 +1,6 @@
 # Server Requirements
 Flask==2.3.3
 Flask-CORS==4.0.0
-
-# Discord Bot Requirements
 discord.py==2.3.2
 aiohttp==3.8.5
-
-# Client Requirements (already in your code)
-PyQt5==5.15.9
-keyboard==0.13.5
-pywin32==306
 requests==2.31.0
