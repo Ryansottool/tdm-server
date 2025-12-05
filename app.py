@@ -1,22 +1,25 @@
-# app.py - PINK/PURPLE BOT WITH TICKET SYSTEM
+# app.py - GOBLIN BOT WITH TICKET SYSTEM
 import os
 import json
 import sqlite3
 import random
 import string
 import time
-import hashlib
 import requests
 from flask import Flask, request, jsonify, session, redirect, url_for, make_response
 from flask_cors import CORS
 from datetime import datetime
 import logging
 import secrets
-import asyncio
 
 app = Flask(__name__)
 app.secret_key = os.environ.get('SECRET_KEY', secrets.token_hex(32))
-CORS(app)
+# Increase session lifetime
+app.config['PERMANENT_SESSION_LIFETIME'] = 86400  # 24 hours
+app.config['SESSION_COOKIE_SECURE'] = False  # Set to True in production with HTTPS
+app.config['SESSION_COOKIE_HTTPONLY'] = True
+app.config['SESSION_COOKIE_SAMESITE'] = 'Lax'
+CORS(app, supports_credentials=True)
 DATABASE = 'sot_tdm.db'
 port = int(os.environ.get("PORT", 10000))
 
@@ -38,18 +41,47 @@ logger = logging.getLogger(__name__)
 bot_active = False
 bot_info = {}
 
-# Ping responses
-PING_RESPONSES = [
-    "I'm here",
-    "Bot is up",
-    "Still alive",
-    "Yeah I'm here",
-    "Online",
-    "Ready",
-    "Here",
-    "Present",
-    "Awake",
-    "Active"
+# Toxic ping responses
+TOXIC_PING_RESPONSES = [
+    "I'm here, unlike your father",
+    "Still alive, surprisingly",
+    "Yeah I'm here, what do you want?",
+    "Online, but busy ignoring you",
+    "Ready to disappoint you",
+    "Here, unfortunately",
+    "Present, sadly",
+    "Awake, can you believe it?",
+    "Active, unfortunately for you",
+    "I'm up, you're still trash",
+    "Yeah yeah, I'm here",
+    "Bot's online, you're still bad",
+    "Pong, get better at pinging",
+    "I exist, unlike your skill",
+    "Here, now stop pinging me",
+    "Online, but not happy about it",
+    "Yes, I'm alive. Happy?",
+    "Present, against my will",
+    "Up and running, unlike you",
+    "Bot status: Annoyed"
+]
+
+# Normal ping responses
+NORMAL_PING_RESPONSES = [
+    "I'm here!",
+    "Bot is up and running!",
+    "Still alive!",
+    "Yeah I'm here!",
+    "Online!",
+    "Ready!",
+    "Here!",
+    "Present!",
+    "Awake!",
+    "Active!",
+    "All systems go!",
+    "Ready for action!",
+    "Bot is online!",
+    "Good to go!",
+    "Operational!"
 ]
 
 # Ticket categories for options
@@ -113,9 +145,9 @@ def create_guild_channel(guild_id, channel_data):
     """Create a channel in guild"""
     return discord_api_request(f"/guilds/{guild_id}/channels", "POST", channel_data)
 
-def modify_channel_permissions(channel_id, overwrite_data):
-    """Modify channel permissions"""
-    return discord_api_request(f"/channels/{channel_id}/permissions/{overwrite_data['id']}", "PUT", overwrite_data)
+def delete_channel(channel_id):
+    """Delete a channel"""
+    return discord_api_request(f"/channels/{channel_id}", "DELETE")
 
 def create_channel_invite(channel_id, max_age=0):
     """Create channel invite"""
@@ -300,7 +332,7 @@ def create_ticket_channel(guild_id, user_id, user_name, ticket_id, issue, catego
         return None
 
 def close_ticket_channel(channel_id, ticket_id, closed_by):
-    """Close ticket channel and update database"""
+    """Close ticket channel, delete it, and update database"""
     try:
         # Get ticket info for webhook
         conn = get_db_connection()
@@ -318,41 +350,15 @@ def close_ticket_channel(channel_id, ticket_id, closed_by):
         conn.commit()
         conn.close()
         
-        # Rename channel to archived
-        channel_data = {
-            "name": f"closed-{int(time.time()) % 10000:04d}",
-            "permission_overwrites": [
-                {
-                    "id": closed_by,
-                    "type": 1,
-                    "allow": "0",
-                    "deny": "1024"
-                }
-            ]
-        }
-        
-        result = discord_api_request(f"/channels/{channel_id}", "PATCH", channel_data)
-        
-        # Send closure message
-        close_message = {
-            "content": f"Ticket closed by <@{closed_by}>",
-            "embeds": [{
-                "title": "🔒 Ticket Closed",
-                "description": f"This ticket has been closed by <@{closed_by}>",
-                "color": 0x95a5a6,
-                "timestamp": datetime.utcnow().isoformat()
-            }],
-            "components": []  # Remove buttons
-        }
-        
-        discord_api_request(f"/channels/{channel_id}/messages", "POST", close_message)
+        # Delete the channel instead of renaming
+        delete_result = delete_channel(channel_id)
         
         # Send webhook notification
         if ticket:
             send_ticket_webhook(ticket_id, ticket['discord_name'], ticket['discord_id'], 
-                              ticket['category'], ticket['issue'], None, "closed")
+                              ticket['category'], ticket['issue'], None, "closed and deleted")
         
-        return True
+        return True if delete_result else False
         
     except Exception as e:
         logger.error(f"Error closing ticket channel: {e}")
@@ -427,18 +433,18 @@ def get_db_connection():
     return conn
 
 # =============================================================================
-# KEY VALIDATION - FIXED VERSION
+# KEY VALIDATION - IMPROVED VERSION
 # =============================================================================
 
 def validate_api_key(api_key):
-    """Validate API key - FIXED to properly check session"""
+    """Validate API key - IMPROVED with better session handling"""
     if not api_key or not api_key.startswith("GOB-"):
         return None
     
     conn = get_db_connection()
     player = conn.execute(
         'SELECT * FROM players WHERE api_key = ?',
-        (api_key,)
+        (api_key.upper(),)  # Ensure uppercase
     ).fetchone()
     
     if player:
@@ -450,7 +456,7 @@ def validate_api_key(api_key):
         conn.commit()
         
         # Convert to dict for session storage
-        player_dict = dict(player)
+        player_dict = {key: player[key] for key in player.keys()}
         conn.close()
         return player_dict
     
@@ -544,8 +550,8 @@ def register_commands():
             "type": 1
         },
         {
-            "name": "stats",
-            "description": "Show your stats",
+            "name": "profile",
+            "description": "Show your profile and stats",
             "type": 1
         },
         {
@@ -619,14 +625,23 @@ def interactions():
                         can_close = True
                 
                 if can_close:
-                    close_ticket_channel(channel_id, ticket_id, user_id)
-                    return jsonify({
-                        "type": 4,
-                        "data": {
-                            "content": f"✅ Ticket `{ticket_id}` has been closed.",
-                            "flags": 64
-                        }
-                    })
+                    success = close_ticket_channel(channel_id, ticket_id, user_id)
+                    if success:
+                        return jsonify({
+                            "type": 4,
+                            "data": {
+                                "content": f"✅ Ticket `{ticket_id}` has been closed and channel deleted.",
+                                "flags": 64
+                            }
+                        })
+                    else:
+                        return jsonify({
+                            "type": 4,
+                            "data": {
+                                "content": f"⚠️ Ticket marked as closed but could not delete channel.",
+                                "flags": 64
+                            }
+                        })
                 else:
                     return jsonify({
                         "type": 4,
@@ -645,7 +660,12 @@ def interactions():
         server_id = data.get('guild_id', 'DM')
         
         if command == 'ping':
-            response = random.choice(PING_RESPONSES)
+            # 30% chance for toxic response
+            if random.random() < 0.3:
+                response = random.choice(TOXIC_PING_RESPONSES)
+            else:
+                response = random.choice(NORMAL_PING_RESPONSES)
+            
             return jsonify({
                 "type": 4,
                 "data": {
@@ -770,18 +790,27 @@ def interactions():
                     }
                 })
             
-            # Close the ticket
-            close_ticket_channel(data.get('channel_id'), ticket['ticket_id'], user_id)
+            # Close the ticket and delete channel
+            success = close_ticket_channel(data.get('channel_id'), ticket['ticket_id'], user_id)
             
-            return jsonify({
-                "type": 4,
-                "data": {
-                    "content": f"✅ Ticket `{ticket['ticket_id']}` has been closed.",
-                    "flags": 64
-                }
-            })
+            if success:
+                return jsonify({
+                    "type": 4,
+                    "data": {
+                        "content": f"✅ Ticket `{ticket['ticket_id']}` has been closed and channel deleted.",
+                        "flags": 64
+                    }
+                })
+            else:
+                return jsonify({
+                    "type": 4,
+                    "data": {
+                        "content": f"⚠️ Ticket marked as closed but could not delete channel.",
+                        "flags": 64
+                    }
+                })
         
-        elif command == 'stats':
+        elif command == 'profile':
             conn = get_db_connection()
             player = conn.execute(
                 'SELECT * FROM players WHERE discord_id = ?',
@@ -800,19 +829,30 @@ def interactions():
             
             kd = player['total_kills'] / max(player['total_deaths'], 1)
             win_rate = (player['wins'] / max(player['wins'] + player['losses'], 1)) * 100
+            total_games = player['wins'] + player['losses']
+            
+            embed = {
+                "title": f"📊 {player['in_game_name']}'s Profile",
+                "color": 0x9d00ff,
+                "fields": [
+                    {"name": "🎮 In-Game Name", "value": f"`{player['in_game_name']}`", "inline": True},
+                    {"name": "👑 Prestige", "value": f"**{player['prestige']}**", "inline": True},
+                    {"name": "📅 Registered", "value": f"<t:{int(time.mktime(datetime.strptime(player['created_at'], '%Y-%m-%d %H:%M:%S').timestamp()))}:R>", "inline": True},
+                    {"name": "⚔️ K/D Ratio", "value": f"**{kd:.2f}** ({player['total_kills']}/{player['total_deaths']})", "inline": True},
+                    {"name": "🏆 Win Rate", "value": f"**{win_rate:.1f}%** ({player['wins']}/{total_games})", "inline": True},
+                    {"name": "🎮 Games Played", "value": f"**{total_games}**", "inline": True},
+                    {"name": "🔑 API Key", "value": f"`{player['api_key'][:8]}...`", "inline": False},
+                    {"name": "🔗 Dashboard", "value": f"[Click Here]({request.host_url})", "inline": True},
+                    {"name": "👑 Status", "value": "**Admin**" if player['is_admin'] else "**Player**", "inline": True}
+                ],
+                "footer": {"text": "Use /key to see full API key"},
+                "timestamp": datetime.utcnow().isoformat()
+            }
             
             return jsonify({
                 "type": 4,
                 "data": {
-                    "content": (
-                        f"📊 **Your Stats**\n\n"
-                        f"**Name:** `{player['in_game_name']}`\n"
-                        f"**K/D Ratio:** {kd:.2f}\n"
-                        f"**Win Rate:** {win_rate:.1f}%\n"
-                        f"**Wins/Losses:** {player['wins']}-{player['losses']}\n"
-                        f"**Prestige:** {player['prestige']}\n\n"
-                        f"View more: {request.host_url}"
-                    ),
+                    "embeds": [embed],
                     "flags": 64
                 }
             })
@@ -882,15 +922,35 @@ def verify_discord_signature(request):
         return False
 
 # =============================================================================
-# WEB INTERFACE - DARK MODE PINK/PURPLE DESIGN
+# SESSION MANAGEMENT
+# =============================================================================
+
+@app.before_request
+def before_request():
+    """Check session before each request"""
+    if request.endpoint not in ['home', 'api_validate_key', 'health', 'api_stats', 'static']:
+        if 'user_key' not in session:
+            return redirect(url_for('home'))
+        
+        # Re-validate session on dashboard access
+        if request.endpoint == 'dashboard':
+            user_data = validate_api_key(session.get('user_key'))
+            if not user_data:
+                session.clear()
+                return redirect(url_for('home'))
+            session['user_data'] = user_data
+
+# =============================================================================
+# WEB INTERFACE - ANIMATED BACKGROUND
 # =============================================================================
 
 @app.route('/')
 def home():
-    """Dark mode Pink/Purple web design"""
+    """Home page with animated background"""
     if 'user_key' in session:
         user_data = validate_api_key(session['user_key'])
         if user_data:
+            session['user_data'] = user_data
             return redirect(url_for('dashboard'))
     
     return '''
@@ -908,12 +968,22 @@ def home():
             }
             
             body {
-                font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
-                background: #0a0a0a;
-                color: #e0e0e0;
+                font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+                background: #000;
+                color: #fff;
                 min-height: 100vh;
                 overflow-x: hidden;
                 position: relative;
+            }
+            
+            #particles-js {
+                position: fixed;
+                width: 100%;
+                height: 100%;
+                top: 0;
+                left: 0;
+                z-index: -1;
+                background: radial-gradient(ellipse at center, #0a0015 0%, #000000 70%);
             }
             
             .container {
@@ -926,15 +996,17 @@ def home():
             }
             
             .logo {
-                font-size: 4rem;
+                font-size: 4.5rem;
                 font-weight: 900;
                 margin-bottom: 20px;
                 background: linear-gradient(45deg, #ff00ff, #9d00ff, #00d4ff);
                 -webkit-background-clip: text;
                 -webkit-text-fill-color: transparent;
-                background-size: 200% 200%;
-                animation: gradient 3s ease infinite;
-                text-shadow: 0 0 30px rgba(255, 0, 255, 0.3);
+                background-size: 300% 300%;
+                animation: gradient 4s ease infinite;
+                text-shadow: 0 0 40px rgba(255, 0, 255, 0.5);
+                letter-spacing: 2px;
+                font-family: 'Arial Black', sans-serif;
             }
             
             @keyframes gradient {
@@ -944,47 +1016,68 @@ def home():
             }
             
             .subtitle {
-                font-size: 1.2rem;
+                font-size: 1.3rem;
                 color: #b19cd9;
                 margin-bottom: 40px;
-                animation: fadeIn 2s;
+                animation: fadeIn 1.5s ease-out;
+                font-weight: 300;
+                letter-spacing: 1px;
             }
             
             @keyframes fadeIn {
-                from { opacity: 0; transform: translateY(20px); }
+                from { opacity: 0; transform: translateY(30px); }
+                to { opacity: 1; transform: translateY(0); }
+            }
+            
+            .login-box {
+                background: rgba(20, 10, 40, 0.7);
+                backdrop-filter: blur(15px);
+                border-radius: 20px;
+                padding: 40px;
+                border: 1px solid rgba(255, 0, 255, 0.3);
+                box-shadow: 0 20px 60px rgba(157, 0, 255, 0.2),
+                            inset 0 1px 0 rgba(255, 255, 255, 0.1);
+                animation: slideUp 0.8s ease-out;
+            }
+            
+            @keyframes slideUp {
+                from { opacity: 0; transform: translateY(50px); }
                 to { opacity: 1; transform: translateY(0); }
             }
             
             .key-input {
                 width: 100%;
-                padding: 20px;
-                background: rgba(25, 25, 25, 0.9);
+                padding: 22px;
+                background: rgba(0, 0, 0, 0.6);
                 border: 2px solid #9d00ff;
                 border-radius: 15px;
                 color: #fff;
                 font-size: 18px;
                 text-align: center;
-                margin-bottom: 25px;
+                margin-bottom: 30px;
                 transition: all 0.3s;
-                backdrop-filter: blur(10px);
-                box-shadow: 0 5px 15px rgba(157, 0, 255, 0.2);
+                font-family: monospace;
+                letter-spacing: 2px;
+                box-shadow: 0 5px 20px rgba(157, 0, 255, 0.2);
             }
             
             .key-input:focus {
                 outline: none;
                 border-color: #ff00ff;
-                box-shadow: 0 0 30px rgba(255, 0, 255, 0.4);
+                box-shadow: 0 0 40px rgba(255, 0, 255, 0.5);
                 transform: scale(1.02);
-                background: rgba(30, 30, 30, 0.95);
+                background: rgba(10, 0, 20, 0.8);
             }
             
             .key-input::placeholder {
                 color: #666;
+                font-family: sans-serif;
+                letter-spacing: normal;
             }
             
             .login-btn {
                 width: 100%;
-                padding: 20px;
+                padding: 22px;
                 background: linear-gradient(45deg, #ff00ff, #9d00ff);
                 color: white;
                 border: none;
@@ -996,13 +1089,14 @@ def home():
                 position: relative;
                 overflow: hidden;
                 text-transform: uppercase;
-                letter-spacing: 1px;
-                box-shadow: 0 10px 20px rgba(157, 0, 255, 0.3);
+                letter-spacing: 2px;
+                box-shadow: 0 10px 30px rgba(157, 0, 255, 0.4);
+                font-family: 'Segoe UI', sans-serif;
             }
             
             .login-btn:hover {
                 transform: translateY(-5px);
-                box-shadow: 0 15px 35px rgba(255, 0, 255, 0.4);
+                box-shadow: 0 20px 40px rgba(255, 0, 255, 0.6);
                 background: linear-gradient(45deg, #9d00ff, #ff00ff);
             }
             
@@ -1016,79 +1110,122 @@ def home():
                 transform: none !important;
             }
             
+            .login-btn::before {
+                content: '';
+                position: absolute;
+                top: -50%;
+                left: -50%;
+                width: 200%;
+                height: 200%;
+                background: linear-gradient(45deg, transparent, rgba(255, 255, 255, 0.2), transparent);
+                transform: rotate(45deg);
+                transition: all 0.5s;
+            }
+            
+            .login-btn:hover::before {
+                left: 100%;
+            }
+            
             .error-box {
-                background: rgba(255, 0, 0, 0.1);
+                background: rgba(255, 0, 0, 0.15);
                 border: 2px solid rgba(255, 0, 0, 0.4);
                 border-radius: 15px;
-                padding: 16px;
-                margin-top: 20px;
+                padding: 18px;
+                margin-top: 25px;
                 color: #ff6b6b;
                 display: none;
                 animation: shake 0.5s;
                 backdrop-filter: blur(10px);
+                font-weight: 500;
             }
             
             @keyframes shake {
                 0%, 100% { transform: translateX(0); }
-                25% { transform: translateX(-5px); }
-                75% { transform: translateX(5px); }
+                25% { transform: translateX(-8px); }
+                75% { transform: translateX(8px); }
             }
             
             .info-box {
-                background: rgba(30, 30, 30, 0.9);
-                border: 2px solid rgba(157, 0, 255, 0.4);
+                background: rgba(30, 15, 60, 0.7);
+                border: 1px solid rgba(157, 0, 255, 0.4);
                 border-radius: 15px;
-                padding: 25px;
-                margin-top: 35px;
+                padding: 30px;
+                margin-top: 40px;
                 text-align: left;
                 color: #d4b3ff;
-                backdrop-filter: blur(10px);
-                box-shadow: 0 5px 15px rgba(0, 0, 0, 0.3);
+                backdrop-filter: blur(15px);
+                box-shadow: 0 10px 30px rgba(0, 0, 0, 0.3);
+                animation: fadeInDelay 1s ease-out 0.5s both;
+            }
+            
+            @keyframes fadeInDelay {
+                from { opacity: 0; transform: translateY(20px); }
+                to { opacity: 1; transform: translateY(0); }
             }
             
             .info-box strong {
                 color: #ff00ff;
                 display: block;
-                margin-bottom: 15px;
-                font-size: 1.1rem;
+                margin-bottom: 20px;
+                font-size: 1.2rem;
+                text-transform: uppercase;
+                letter-spacing: 1px;
             }
             
             .info-box code {
                 background: rgba(0, 0, 0, 0.5);
-                padding: 3px 8px;
-                border-radius: 5px;
-                font-family: monospace;
+                padding: 4px 10px;
+                border-radius: 6px;
+                font-family: 'Courier New', monospace;
                 color: #9d00ff;
-                margin: 0 2px;
+                margin: 0 3px;
+                font-weight: bold;
+            }
+            
+            .info-box p {
+                margin-bottom: 15px;
+                line-height: 1.6;
+                font-size: 1.05rem;
             }
             
             .bot-status {
-                padding: 12px 24px;
-                background: rgba(30, 30, 30, 0.9);
+                padding: 15px 30px;
+                background: rgba(30, 15, 60, 0.7);
                 border: 2px solid rgba(157, 0, 255, 0.4);
-                border-radius: 25px;
-                margin-top: 25px;
+                border-radius: 30px;
+                margin-top: 35px;
                 display: inline-block;
-                backdrop-filter: blur(10px);
+                backdrop-filter: blur(15px);
                 font-weight: 600;
-                box-shadow: 0 5px 15px rgba(0, 0, 0, 0.3);
+                font-size: 1.1rem;
+                box-shadow: 0 10px 30px rgba(0, 0, 0, 0.2);
+                animation: pulse 2s infinite;
+            }
+            
+            @keyframes pulse {
+                0% { box-shadow: 0 10px 30px rgba(0, 0, 0, 0.2); }
+                50% { box-shadow: 0 10px 40px rgba(157, 0, 255, 0.3); }
+                100% { box-shadow: 0 10px 30px rgba(0, 0, 0, 0.2); }
             }
             
             .status-online {
                 color: #00ff9d;
                 border-color: rgba(0, 255, 157, 0.4);
+                text-shadow: 0 0 10px rgba(0, 255, 157, 0.5);
             }
             
             .status-offline {
                 color: #ff6b6b;
                 border-color: rgba(255, 107, 107, 0.4);
+                text-shadow: 0 0 10px rgba(255, 107, 107, 0.5);
             }
             
             .neon-line {
-                height: 2px;
-                background: linear-gradient(90deg, transparent, #ff00ff, transparent);
-                margin: 30px 0;
+                height: 3px;
+                background: linear-gradient(90deg, transparent, #ff00ff, #9d00ff, transparent);
+                margin: 40px 0;
                 width: 100%;
+                opacity: 0.7;
             }
             
             @media (max-width: 768px) {
@@ -1096,32 +1233,72 @@ def home():
                     padding: 20px;
                 }
                 .logo {
-                    font-size: 3rem;
+                    font-size: 3.5rem;
                 }
+                .login-box {
+                    padding: 30px 20px;
+                }
+                .key-input {
+                    padding: 18px;
+                    font-size: 16px;
+                }
+                .login-btn {
+                    padding: 18px;
+                    font-size: 16px;
+                }
+            }
+            
+            .glow {
+                position: absolute;
+                width: 300px;
+                height: 300px;
+                border-radius: 50%;
+                background: radial-gradient(circle, rgba(255, 0, 255, 0.2) 0%, transparent 70%);
+                filter: blur(60px);
+                animation: float 20s infinite linear;
+                z-index: -1;
+            }
+            
+            @keyframes float {
+                0% { transform: translate(0, 0) rotate(0deg); }
+                25% { transform: translate(100px, 100px) rotate(90deg); }
+                50% { transform: translate(0, 200px) rotate(180deg); }
+                75% { transform: translate(-100px, 100px) rotate(270deg); }
+                100% { transform: translate(0, 0) rotate(360deg); }
             }
         </style>
     </head>
     <body>
+        <div id="particles-js"></div>
+        
+        <!-- Floating glow effects -->
+        <div class="glow" style="top: 10%; left: 10%; animation-delay: 0s; background: radial-gradient(circle, rgba(157, 0, 255, 0.2) 0%, transparent 70%);"></div>
+        <div class="glow" style="top: 60%; right: 10%; animation-delay: -5s; background: radial-gradient(circle, rgba(0, 212, 255, 0.15) 0%, transparent 70%);"></div>
+        <div class="glow" style="bottom: 20%; left: 20%; animation-delay: -10s; background: radial-gradient(circle, rgba(255, 0, 255, 0.15) 0%, transparent 70%);"></div>
+        
         <div class="container">
             <div class="logo">GOBLIN</div>
             <div class="subtitle">Enter your API key to access the dashboard</div>
             
-            <div class="neon-line"></div>
-            
-            <input type="password" 
-                   class="key-input" 
-                   id="apiKey" 
-                   placeholder="GOB-XXXXXXXXXXXXXXXX"
-                   autocomplete="off"
-                   spellcheck="false">
-            
-            <button class="login-btn" onclick="validateKey()" id="loginBtn">
-                Enter Dashboard
-            </button>
-            
-            <div class="error-box" id="errorMessage">
-                Invalid API key
+            <div class="login-box">
+                <input type="password" 
+                       class="key-input" 
+                       id="apiKey" 
+                       placeholder="GOB-XXXXXXXXXXXXXXXX"
+                       autocomplete="off"
+                       spellcheck="false"
+                       autocapitalize="characters">
+                
+                <button class="login-btn" onclick="validateKey()" id="loginBtn">
+                    Enter Dashboard
+                </button>
+                
+                <div class="error-box" id="errorMessage">
+                    Invalid API key
+                </div>
             </div>
+            
+            <div class="neon-line"></div>
             
             <div class="info-box">
                 <strong>How to get your API key:</strong>
@@ -1136,7 +1313,43 @@ def home():
             </div>
         </div>
         
+        <script src="https://cdn.jsdelivr.net/particles.js/2.0.0/particles.min.js"></script>
         <script>
+            // Initialize particles
+            particlesJS('particles-js', {
+                particles: {
+                    number: { value: 80, density: { enable: true, value_area: 800 } },
+                    color: { value: ["#ff00ff", "#9d00ff", "#00d4ff"] },
+                    shape: { type: "circle" },
+                    opacity: { value: 0.5, random: true },
+                    size: { value: 3, random: true },
+                    line_linked: {
+                        enable: true,
+                        distance: 150,
+                        color: "#9d00ff",
+                        opacity: 0.2,
+                        width: 1
+                    },
+                    move: {
+                        enable: true,
+                        speed: 2,
+                        direction: "none",
+                        random: true,
+                        straight: false,
+                        out_mode: "out",
+                        bounce: false
+                    }
+                },
+                interactivity: {
+                    detect_on: "canvas",
+                    events: {
+                        onhover: { enable: true, mode: "repulse" },
+                        onclick: { enable: true, mode: "push" }
+                    }
+                },
+                retina_detect: true
+            });
+            
             async function validateKey() {
                 const key = document.getElementById('apiKey').value.trim().toUpperCase();
                 const errorDiv = document.getElementById('errorMessage');
@@ -1154,13 +1367,22 @@ def home():
                     return;
                 }
                 
+                if (key.length < 20) {
+                    errorDiv.textContent = "Invalid key format";
+                    errorDiv.style.display = 'block';
+                    return;
+                }
+                
                 btn.innerHTML = '🔮 Checking...';
                 btn.disabled = true;
                 
                 try {
                     const response = await fetch('/api/validate-key', {
                         method: 'POST',
-                        headers: {'Content-Type': 'application/json'},
+                        headers: {
+                            'Content-Type': 'application/json',
+                            'Accept': 'application/json'
+                        },
                         body: JSON.stringify({ api_key: key })
                     });
                     
@@ -1170,12 +1392,31 @@ def home():
                         btn.innerHTML = '✅ Access Granted';
                         btn.style.background = 'linear-gradient(45deg, #00ff9d, #00d4ff)';
                         
-                        // Store in session
-                        sessionStorage.setItem('user_key', key);
+                        // Add particles celebration
+                        particlesJS('particles-js', {
+                            particles: {
+                                number: { value: 150, density: { enable: true, value_area: 800 } },
+                                color: { value: ["#00ff9d", "#00d4ff", "#9d00ff"] },
+                                shape: { type: "circle" },
+                                opacity: { value: 0.8, random: true },
+                                size: { value: 4, random: true },
+                                line_linked: { enable: false },
+                                move: {
+                                    enable: true,
+                                    speed: 6,
+                                    direction: "none",
+                                    random: true,
+                                    straight: false,
+                                    out_mode: "out",
+                                    bounce: false
+                                }
+                            },
+                            retina_detect: true
+                        });
                         
                         setTimeout(() => {
                             window.location.href = '/dashboard';
-                        }, 600);
+                        }, 800);
                     } else {
                         errorDiv.textContent = data.error || 'Invalid API key';
                         errorDiv.style.display = 'block';
@@ -1183,7 +1424,8 @@ def home():
                         btn.disabled = false;
                     }
                 } catch (error) {
-                    errorDiv.textContent = 'Connection error';
+                    console.error('Validation error:', error);
+                    errorDiv.textContent = 'Connection error. Please try again.';
                     errorDiv.style.display = 'block';
                     btn.innerHTML = 'Enter Dashboard';
                     btn.disabled = false;
@@ -1216,7 +1458,7 @@ def home():
                 checkBotStatus();
                 setInterval(checkBotStatus, 30000);
                 
-                // Check if already logged in
+                // Check if already logged in from sessionStorage
                 const storedKey = sessionStorage.getItem('user_key');
                 if (storedKey) {
                     document.getElementById('apiKey').value = storedKey;
@@ -1229,7 +1471,7 @@ def home():
 
 @app.route('/api/validate-key', methods=['POST'])
 def api_validate_key():
-    """Validate API key - FIXED to properly set session"""
+    """Validate API key - IMPROVED with session handling"""
     data = request.get_json()
     api_key = data.get('api_key', '').strip().upper()
     
@@ -1239,11 +1481,14 @@ def api_validate_key():
     user_data = validate_api_key(api_key)
     
     if user_data:
+        session.clear()
         session['user_key'] = api_key
         session['user_data'] = user_data
-        # Make sure session is saved
+        session.permanent = True
+        # Force session save
         session.modified = True
-        return jsonify({"valid": True})
+        
+        return jsonify({"valid": True, "user": user_data.get('in_game_name')})
     else:
         return jsonify({"valid": False, "error": "Invalid API key"})
 
@@ -1252,12 +1497,12 @@ def logout():
     """Logout"""
     session.clear()
     response = make_response(redirect(url_for('home')))
-    response.delete_cookie('session')
+    response.set_cookie('session', '', expires=0)
     return response
 
 @app.route('/dashboard')
 def dashboard():
-    """Dark mode Pink/Purple dashboard"""
+    """Profile Dashboard with animated background"""
     if 'user_key' not in session:
         return redirect(url_for('home'))
     
@@ -1266,6 +1511,7 @@ def dashboard():
         # Try to re-validate the key
         user_data = validate_api_key(session.get('user_key'))
         if not user_data:
+            session.clear()
             return redirect(url_for('home'))
         session['user_data'] = user_data
     
@@ -1274,12 +1520,27 @@ def dashboard():
     total_games = user_data.get('wins', 0) + user_data.get('losses', 0)
     win_rate = (user_data.get('wins', 0) / total_games * 100) if total_games > 0 else 0
     
+    # Format dates
+    from datetime import datetime as dt
+    created_at = user_data.get('created_at', '')
+    if created_at:
+        try:
+            created_date = dt.strptime(created_at, '%Y-%m-%d %H:%M:%S')
+            created_str = created_date.strftime('%b %d, %Y')
+            days_ago = (dt.now() - created_date).days
+        except:
+            created_str = "Unknown"
+            days_ago = 0
+    else:
+        created_str = "Unknown"
+        days_ago = 0
+    
     is_admin = user_data.get('is_admin', 0)
     
     # Get open tickets for this user
     conn = get_db_connection()
     tickets = conn.execute(
-        'SELECT * FROM tickets WHERE discord_id = ? AND status = "open" ORDER BY created_at DESC LIMIT 5',
+        'SELECT * FROM tickets WHERE discord_id = ? AND status = "open" ORDER BY created_at DESC LIMIT 3',
         (user_data['discord_id'],)
     ).fetchall()
     conn.close()
@@ -1287,31 +1548,32 @@ def dashboard():
     tickets_html = ''
     for ticket in tickets:
         category_info = next((c for c in TICKET_CATEGORIES if c["name"] == ticket['category']), TICKET_CATEGORIES[-1])
+        color_hex = f"#{hex(category_info['color'])[2:].zfill(6)}"
         tickets_html += f'''
         <div class="ticket-card">
             <div class="ticket-header">
-                <div>
-                    <span style="color: #{hex(category_info['color'])[2:]}; font-size: 1.2rem;">{category_info['emoji']}</span>
+                <div class="ticket-title">
+                    <span class="ticket-emoji">{category_info['emoji']}</span>
                     <strong>TICKET-{ticket['ticket_id']}</strong>
                 </div>
                 <span class="status-open">OPEN</span>
             </div>
-            <p class="ticket-issue">{ticket['issue'][:80]}...</p>
-            <div class="ticket-actions">
-                <button class="ticket-btn view" onclick="viewTicket('{ticket['ticket_id']}')">View</button>
-                <button class="ticket-btn close" onclick="closeTicket('{ticket['ticket_id']}')">Close</button>
+            <p class="ticket-issue">{ticket['issue'][:100]}...</p>
+            <div class="ticket-footer">
+                <span class="ticket-category" style="color: {color_hex};">{ticket['category']}</span>
+                <span class="ticket-date">{ticket['created_at'][:10]}</span>
             </div>
         </div>
         '''
     
     if not tickets_html:
-        tickets_html = '<p class="no-tickets">No open tickets</p>'
+        tickets_html = '<div class="no-tickets"><span>🎉</span><p>No open tickets</p></div>'
     
     return f'''
     <!DOCTYPE html>
     <html>
     <head>
-        <title>GOBLIN Dashboard</title>
+        <title>GOBLIN Profile</title>
         <meta charset="UTF-8">
         <meta name="viewport" content="width=device-width, initial-scale=1.0">
         <style>
@@ -1322,104 +1584,215 @@ def dashboard():
             }}
             
             body {{
-                font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
-                background: #0a0a0a;
-                color: #e0e0e0;
+                font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+                background: #000;
+                color: #fff;
                 min-height: 100vh;
-                position: relative;
                 overflow-x: hidden;
+                position: relative;
+            }}
+            
+            #particles-js {{
+                position: fixed;
+                width: 100%;
+                height: 100%;
+                top: 0;
+                left: 0;
+                z-index: -1;
+                background: radial-gradient(ellipse at center, #0a0015 0%, #000000 70%);
             }}
             
             .header {{
-                background: rgba(15, 15, 15, 0.95);
-                backdrop-filter: blur(20px);
+                background: rgba(15, 5, 30, 0.9);
+                backdrop-filter: blur(25px);
                 border-bottom: 3px solid #ff00ff;
-                padding: 25px 40px;
+                padding: 25px 50px;
                 display: flex;
                 justify-content: space-between;
                 align-items: center;
                 position: sticky;
                 top: 0;
                 z-index: 100;
-                box-shadow: 0 5px 30px rgba(0, 0, 0, 0.5);
+                box-shadow: 0 10px 50px rgba(0, 0, 0, 0.7);
             }}
             
             .logo {{
-                font-size: 2rem;
+                font-size: 2.2rem;
                 font-weight: 900;
                 background: linear-gradient(45deg, #ff00ff, #9d00ff);
                 -webkit-background-clip: text;
                 -webkit-text-fill-color: transparent;
-                text-shadow: 0 0 20px rgba(255, 0, 255, 0.3);
+                text-shadow: 0 0 25px rgba(255, 0, 255, 0.4);
+                letter-spacing: 1px;
+                font-family: 'Arial Black', sans-serif;
             }}
             
             .user-info {{
                 display: flex;
                 align-items: center;
-                gap: 25px;
+                gap: 30px;
+            }}
+            
+            .user-details {{
+                text-align: right;
+            }}
+            
+            .user-name {{
+                font-size: 1.4rem;
+                color: #ff00ff;
+                font-weight: bold;
+                margin-bottom: 5px;
+                text-shadow: 0 0 15px rgba(255, 0, 255, 0.5);
+            }}
+            
+            .user-subtitle {{
+                color: #b19cd9;
+                font-size: 0.9rem;
+                font-weight: 300;
             }}
             
             .admin-badge {{
                 background: linear-gradient(45deg, #ff00ff, #9d00ff);
                 color: white;
-                padding: 6px 15px;
-                border-radius: 20px;
-                font-size: 0.8rem;
+                padding: 8px 20px;
+                border-radius: 25px;
+                font-size: 0.9rem;
                 font-weight: bold;
-                box-shadow: 0 0 15px rgba(255, 0, 255, 0.4);
+                box-shadow: 0 5px 20px rgba(255, 0, 255, 0.4);
+                animation: glow 2s infinite;
+            }}
+            
+            @keyframes glow {{
+                0%, 100% {{ box-shadow: 0 5px 20px rgba(255, 0, 255, 0.4); }}
+                50% {{ box-shadow: 0 5px 30px rgba(255, 0, 255, 0.7); }}
             }}
             
             .logout-btn {{
-                padding: 10px 24px;
+                padding: 12px 28px;
                 background: linear-gradient(45deg, #ff416c, #ff4b2b);
                 color: white;
                 border: none;
-                border-radius: 12px;
+                border-radius: 15px;
                 font-weight: bold;
                 cursor: pointer;
                 text-decoration: none;
                 transition: all 0.3s;
-                box-shadow: 0 5px 15px rgba(255, 65, 108, 0.3);
+                box-shadow: 0 8px 25px rgba(255, 65, 108, 0.4);
+                font-family: 'Segoe UI', sans-serif;
+                letter-spacing: 1px;
             }}
             
             .logout-btn:hover {{
-                transform: translateY(-3px);
-                box-shadow: 0 10px 25px rgba(255, 65, 108, 0.4);
+                transform: translateY(-5px);
+                box-shadow: 0 15px 35px rgba(255, 65, 108, 0.6);
             }}
             
             .container {{
-                max-width: 1200px;
+                max-width: 1300px;
                 margin: 0 auto;
-                padding: 40px;
+                padding: 50px;
+            }}
+            
+            .profile-section {{
+                display: grid;
+                grid-template-columns: 1fr 400px;
+                gap: 40px;
+                margin-bottom: 50px;
+            }}
+            
+            @media (max-width: 1100px) {{
+                .profile-section {{
+                    grid-template-columns: 1fr;
+                }}
+            }}
+            
+            .profile-card {{
+                background: rgba(25, 10, 50, 0.7);
+                backdrop-filter: blur(25px);
+                border-radius: 25px;
+                padding: 50px;
+                border: 1px solid rgba(255, 0, 255, 0.3);
+                box-shadow: 0 25px 60px rgba(157, 0, 255, 0.2),
+                            inset 0 1px 0 rgba(255, 255, 255, 0.1);
+                animation: slideUp 0.8s ease-out;
+            }}
+            
+            .profile-header {{
+                display: flex;
+                align-items: center;
+                gap: 30px;
+                margin-bottom: 40px;
+                padding-bottom: 30px;
+                border-bottom: 2px solid rgba(157, 0, 255, 0.3);
+            }}
+            
+            .avatar {{
+                width: 100px;
+                height: 100px;
+                background: linear-gradient(45deg, #ff00ff, #9d00ff);
+                border-radius: 50%;
+                display: flex;
+                align-items: center;
+                justify-content: center;
+                font-size: 2.5rem;
+                color: white;
+                box-shadow: 0 10px 30px rgba(255, 0, 255, 0.4);
+                animation: rotate 20s linear infinite;
+            }}
+            
+            @keyframes rotate {{
+                from {{ transform: rotate(0deg); }}
+                to {{ transform: rotate(360deg); }}
+            }}
+            
+            .avatar-content {{
+                transform: rotate(-360deg);
+                animation: counterRotate 20s linear infinite;
+            }}
+            
+            @keyframes counterRotate {{
+                from {{ transform: rotate(0deg); }}
+                to {{ transform: rotate(-360deg); }}
+            }}
+            
+            .profile-info h2 {{
+                font-size: 2.5rem;
+                margin-bottom: 10px;
+                background: linear-gradient(45deg, #ff00ff, #9d00ff);
+                -webkit-background-clip: text;
+                -webkit-text-fill-color: transparent;
+            }}
+            
+            .profile-info p {{
+                color: #b19cd9;
+                font-size: 1.1rem;
             }}
             
             .stats-grid {{
                 display: grid;
-                grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+                grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
                 gap: 25px;
-                margin-bottom: 50px;
+                margin-bottom: 40px;
             }}
             
-            .stat-card {{
-                background: rgba(30, 30, 30, 0.9);
-                backdrop-filter: blur(20px);
+            .stat-item {{
+                background: rgba(0, 0, 0, 0.4);
                 border-radius: 20px;
-                padding: 35px;
+                padding: 30px;
                 text-align: center;
-                border: 2px solid rgba(157, 0, 255, 0.3);
+                border: 1px solid rgba(157, 0, 255, 0.2);
                 transition: all 0.4s;
                 position: relative;
                 overflow: hidden;
-                box-shadow: 0 10px 30px rgba(0, 0, 0, 0.3);
             }}
             
-            .stat-card:hover {{
-                transform: translateY(-10px) scale(1.02);
+            .stat-item:hover {{
+                transform: translateY(-10px);
                 border-color: rgba(255, 0, 255, 0.5);
                 box-shadow: 0 20px 40px rgba(255, 0, 255, 0.2);
             }}
             
-            .stat-card::before {{
+            .stat-item::before {{
                 content: '';
                 position: absolute;
                 top: 0;
@@ -1430,59 +1803,62 @@ def dashboard():
             }}
             
             .stat-value {{
-                font-size: 3.5rem;
+                font-size: 3rem;
                 font-weight: 900;
-                margin: 20px 0;
-                font-family: 'Segoe UI', sans-serif;
+                margin: 15px 0;
+                font-family: 'Arial Black', sans-serif;
                 text-shadow: 0 0 20px currentColor;
             }}
             
             .stat-label {{
                 color: #b19cd9;
-                font-size: 0.95rem;
+                font-size: 1rem;
                 text-transform: uppercase;
                 letter-spacing: 2px;
                 margin-bottom: 10px;
+                font-weight: 300;
             }}
             
-            .key-section {{
-                background: rgba(30, 30, 30, 0.9);
-                backdrop-filter: blur(20px);
+            .key-card {{
+                background: rgba(25, 10, 50, 0.7);
+                backdrop-filter: blur(25px);
                 border-radius: 25px;
                 padding: 50px;
-                margin-bottom: 50px;
-                border: 2px solid rgba(157, 0, 255, 0.3);
-                position: relative;
-                overflow: hidden;
-                box-shadow: 0 15px 35px rgba(0, 0, 0, 0.3);
+                border: 1px solid rgba(0, 212, 255, 0.3);
+                box-shadow: 0 25px 60px rgba(0, 212, 255, 0.15),
+                            inset 0 1px 0 rgba(255, 255, 255, 0.1);
+                animation: slideUp 0.8s ease-out 0.2s both;
             }}
             
-            .key-section::before {{
-                content: '';
-                position: absolute;
-                top: 0;
-                left: 0;
-                right: 0;
-                height: 3px;
-                background: linear-gradient(90deg, #00ff9d, #00d4ff);
+            .key-card h3 {{
+                font-size: 1.8rem;
+                margin-bottom: 25px;
+                color: #00d4ff;
+                text-shadow: 0 0 15px rgba(0, 212, 255, 0.5);
             }}
             
             .key-display {{
-                background: rgba(0, 0, 0, 0.5);
+                background: rgba(0, 0, 0, 0.6);
                 border: 2px solid rgba(157, 0, 255, 0.5);
-                border-radius: 16px;
-                padding: 25px;
+                border-radius: 20px;
+                padding: 30px;
                 margin: 30px 0;
-                font-family: monospace;
+                font-family: 'Courier New', monospace;
                 color: #00ff9d;
                 text-align: center;
                 cursor: pointer;
                 position: relative;
                 overflow: hidden;
-                letter-spacing: 2px;
-                font-size: 1.3rem;
+                letter-spacing: 3px;
+                font-size: 1.5rem;
                 text-shadow: 0 0 10px #00ff9d;
-                box-shadow: 0 5px 15px rgba(0, 255, 157, 0.1);
+                box-shadow: 0 10px 30px rgba(0, 255, 157, 0.1);
+                transition: all 0.3s;
+            }}
+            
+            .key-display:hover {{
+                transform: scale(1.02);
+                box-shadow: 0 15px 40px rgba(0, 255, 157, 0.2);
             }}
             
             .key-display::before {{
@@ -1492,117 +1868,32 @@ def dashboard():
                 left: 0;
                 right: 0;
                 bottom: 0;
-                background: rgba(0, 0, 0, 0.9);
+                background: rgba(0, 0, 0, 0.95);
                 display: flex;
                 align-items: center;
                 justify-content: center;
                 font-family: sans-serif;
-                font-size: 1.2rem;
+                font-size: 1.3rem;
                 color: #b19cd9;
                 backdrop-filter: blur(5px);
-                border-radius: 14px;
+                border-radius: 18px;
+                transition: opacity 0.3s;
             }}
             
             .key-display.revealed::before {{
-                display: none;
-            }}
-            
-            .tickets-section {{
-                background: rgba(30, 30, 30, 0.9);
-                backdrop-filter: blur(20px);
-                border-radius: 25px;
-                padding: 50px;
-                margin-bottom: 50px;
-                border: 2px solid rgba(255, 0, 255, 0.3);
-                box-shadow: 0 15px 35px rgba(0, 0, 0, 0.3);
-            }}
-            
-            .ticket-card {{
-                background: rgba(20, 20, 20, 0.8);
-                border-radius: 16px;
-                padding: 25px;
-                margin-bottom: 20px;
-                border: 1px solid rgba(157, 0, 255, 0.2);
-                transition: all 0.3s;
-                box-shadow: 0 5px 15px rgba(0, 0, 0, 0.2);
-            }}
-            
-            .ticket-card:hover {{
-                border-color: rgba(255, 0, 255, 0.4);
-                transform: translateX(10px);
-                box-shadow: 0 10px 25px rgba(255, 0, 255, 0.1);
-            }}
-            
-            .ticket-header {{
-                display: flex;
-                justify-content: space-between;
-                align-items: center;
-                margin-bottom: 15px;
-            }}
-            
-            .status-open {{
-                color: #00ff9d;
-                font-size: 0.9rem;
-                font-weight: bold;
-                text-shadow: 0 0 10px #00ff9d;
-            }}
-            
-            .ticket-issue {{
-                color: #d4b3ff;
-                margin-bottom: 20px;
-                font-size: 0.95rem;
-                line-height: 1.4;
-            }}
-            
-            .ticket-actions {{
-                display: flex;
-                gap: 10px;
-            }}
-            
-            .ticket-btn {{
-                padding: 10px 20px;
-                background: rgba(157, 0, 255, 0.3);
-                border: 2px solid #9d00ff;
-                color: white;
-                border-radius: 8px;
-                cursor: pointer;
-                transition: all 0.3s;
-                font-weight: bold;
-                box-shadow: 0 3px 10px rgba(157, 0, 255, 0.2);
-            }}
-            
-            .ticket-btn:hover {{
-                background: rgba(157, 0, 255, 0.5);
-                transform: translateY(-3px);
-                box-shadow: 0 6px 15px rgba(157, 0, 255, 0.3);
-            }}
-            
-            .ticket-btn.close {{
-                background: rgba(255, 0, 0, 0.3);
-                border-color: #ff0000;
-            }}
-            
-            .ticket-btn.close:hover {{
-                background: rgba(255, 0, 0, 0.5);
-                box-shadow: 0 6px 15px rgba(255, 0, 0, 0.3);
-            }}
-            
-            .no-tickets {{
-                color: #666;
-                text-align: center;
-                padding: 40px;
-                font-size: 1.1rem;
+                opacity: 0;
+                pointer-events: none;
             }}
             
             .action-buttons {{
                 display: flex;
+                flex-direction: column;
                 gap: 20px;
                 margin-top: 40px;
-                flex-wrap: wrap;
             }}
             
             .action-btn {{
-                padding: 18px 36px;
+                padding: 20px;
                 background: linear-gradient(45deg, #ff00ff, #9d00ff);
                 color: white;
                 border: none;
@@ -1612,20 +1903,18 @@ def dashboard():
                 cursor: pointer;
                 transition: all 0.3s;
                 text-decoration: none;
-                display: inline-flex;
+                display: flex;
                 align-items: center;
-                gap: 15px;
-                flex: 1;
-                min-width: 200px;
                 justify-content: center;
-                text-transform: uppercase;
+                gap: 15px;
                 letter-spacing: 1px;
-                box-shadow: 0 8px 20px rgba(157, 0, 255, 0.3);
+                font-family: 'Segoe UI', sans-serif;
+                box-shadow: 0 10px 30px rgba(157, 0, 255, 0.3);
             }}
             
             .action-btn:hover {{
                 transform: translateY(-8px);
-                box-shadow: 0 15px 35px rgba(255, 0, 255, 0.4);
+                box-shadow: 0 20px 40px rgba(255, 0, 255, 0.5);
                 background: linear-gradient(45deg, #9d00ff, #ff00ff);
             }}
             
@@ -1634,27 +1923,133 @@ def dashboard():
             }}
             
             .action-btn.admin:hover {{
-                box-shadow: 0 15px 35px rgba(0, 255, 157, 0.4);
+                box-shadow: 0 20px 40px rgba(0, 255, 157, 0.5);
+            }}
+            
+            .tickets-section {{
+                background: rgba(25, 10, 50, 0.7);
+                backdrop-filter: blur(25px);
+                border-radius: 25px;
+                padding: 50px;
+                margin-bottom: 50px;
+                border: 1px solid rgba(255, 0, 255, 0.3);
+                box-shadow: 0 25px 60px rgba(0, 0, 0, 0.3);
+                animation: slideUp 0.8s ease-out 0.4s both;
+            }}
+            
+            .tickets-section h3 {{
+                font-size: 2rem;
+                margin-bottom: 40px;
+                color: #ff00ff;
+                text-shadow: 0 0 20px rgba(255, 0, 255, 0.5);
+            }}
+            
+            .tickets-grid {{
+                display: grid;
+                grid-template-columns: repeat(auto-fit, minmax(350px, 1fr));
+                gap: 25px;
+            }}
+            
+            .ticket-card {{
+                background: rgba(20, 5, 40, 0.8);
+                border-radius: 20px;
+                padding: 30px;
+                border: 1px solid rgba(157, 0, 255, 0.2);
+                transition: all 0.3s;
+                box-shadow: 0 10px 30px rgba(0, 0, 0, 0.2);
+            }}
+            
+            .ticket-card:hover {{
+                transform: translateY(-10px);
+                border-color: rgba(255, 0, 255, 0.4);
+                box-shadow: 0 20px 40px rgba(255, 0, 255, 0.2);
+            }}
+            
+            .ticket-header {{
+                display: flex;
+                justify-content: space-between;
+                align-items: center;
+                margin-bottom: 20px;
+            }}
+            
+            .ticket-title {{
+                display: flex;
+                align-items: center;
+                gap: 15px;
+            }}
+            
+            .ticket-emoji {{
+                font-size: 1.5rem;
+            }}
+            
+            .status-open {{
+                color: #00ff9d;
+                font-weight: bold;
+                font-size: 0.9rem;
+                padding: 5px 15px;
+                background: rgba(0, 255, 157, 0.1);
+                border-radius: 20px;
+                text-shadow: 0 0 10px #00ff9d;
+            }}
+            
+            .ticket-issue {{
+                color: #d4b3ff;
+                margin-bottom: 25px;
+                font-size: 1.1rem;
+                line-height: 1.5;
+            }}
+            
+            .ticket-footer {{
+                display: flex;
+                justify-content: space-between;
+                align-items: center;
+                color: #888;
+                font-size: 0.9rem;
+            }}
+            
+            .ticket-category {{
+                font-weight: bold;
+            }}
+            
+            .no-tickets {{
+                grid-column: 1 / -1;
+                text-align: center;
+                padding: 60px;
+                color: #666;
+            }}
+            
+            .no-tickets span {{
+                font-size: 4rem;
+                display: block;
+                margin-bottom: 20px;
+                opacity: 0.5;
             }}
             
             .notification {{
                 position: fixed;
-                bottom: 30px;
-                right: 30px;
+                bottom: 40px;
+                right: 40px;
                 background: linear-gradient(45deg, #00ff9d, #00d4ff);
-                color: black;
-                padding: 20px 30px;
-                border-radius: 15px;
+                color: #000;
+                padding: 25px 35px;
+                border-radius: 20px;
                 z-index: 1000;
                 display: none;
                 animation: slideInRight 0.5s ease-out;
                 font-weight: bold;
-                box-shadow: 0 10px 30px rgba(0, 255, 157, 0.4);
+                font-size: 1.1rem;
+                box-shadow: 0 15px 40px rgba(0, 255, 157, 0.5);
+                font-family: 'Segoe UI', sans-serif;
             }}
             
             @keyframes slideInRight {{
                 from {{ transform: translateX(100%); opacity: 0; }}
                 to {{ transform: translateX(0); opacity: 1; }}
+            }}
+            
+            @keyframes slideUp {{
+                from {{ opacity: 0; transform: translateY(50px); }}
+                to {{ opacity: 1; transform: translateY(0); }}
             }}
             
             @media (max-width: 768px) {{
@@ -1667,119 +2062,212 @@ def dashboard():
                 .container {{
                     padding: 20px;
                 }}
+                .profile-section {{
+                    gap: 20px;
+                }}
+                .profile-card, .key-card, .tickets-section {{
+                    padding: 30px 20px;
+                }}
                 .stats-grid {{
                     grid-template-columns: 1fr;
                 }}
-                .key-section, .tickets-section {{
-                    padding: 30px 20px;
+                .tickets-grid {{
+                    grid-template-columns: 1fr;
                 }}
-                .action-buttons {{
-                    flex-direction: column;
+                .avatar {{
+                    width: 80px;
+                    height: 80px;
+                    font-size: 2rem;
                 }}
-                .action-btn {{
-                    min-width: 100%;
+                .profile-info h2 {{
+                    font-size: 2rem;
                 }}
                 .key-display {{
-                    font-size: 1.1rem;
+                    font-size: 1.2rem;
                     padding: 20px;
                 }}
+            }}
+            
+            .glow {{
+                position: fixed;
+                width: 400px;
+                height: 400px;
+                border-radius: 50%;
+                background: radial-gradient(circle, rgba(255, 0, 255, 0.15) 0%, transparent 70%);
+                filter: blur(80px);
+                animation: float 25s infinite linear;
+                z-index: -1;
+            }}
+            
+            @keyframes float {{
+                0% {{ transform: translate(0, 0) rotate(0deg); }}
+                33% {{ transform: translate(200px, 200px) rotate(120deg); }}
+                66% {{ transform: translate(-200px, 100px) rotate(240deg); }}
+                100% {{ transform: translate(0, 0) rotate(360deg); }}
             }}
         </style>
     </head>
     <body>
+        <div id="particles-js"></div>
+        
+        <!-- Floating glow effects -->
+        <div class="glow" style="top: 10%; left: 5%; animation-delay: 0s; background: radial-gradient(circle, rgba(157, 0, 255, 0.15) 0%, transparent 70%);"></div>
+        <div class="glow" style="top: 60%; right: 5%; animation-delay: -8s; background: radial-gradient(circle, rgba(0, 212, 255, 0.1) 0%, transparent 70%);"></div>
+        <div class="glow" style="bottom: 10%; left: 30%; animation-delay: -16s; background: radial-gradient(circle, rgba(255, 0, 255, 0.1) 0%, transparent 70%);"></div>
+        
         <div class="header">
-            <div class="logo">GOBLIN DASHBOARD</div>
+            <div class="logo">GOBLIN PROFILE</div>
             <div class="user-info">
-                <div>
-                    <div style="display: flex; align-items: center; gap: 15px; margin-bottom: 5px;">
-                        <strong style="font-size: 1.2rem; color: #ff00ff;">{user_data.get('in_game_name', 'Player')}</strong>
-                        { '<span class="admin-badge">👑 ADMIN</span>' if is_admin else '' }
-                    </div>
-                    <div style="color: #b19cd9; font-size: 0.9rem;">Prestige {user_data.get('prestige', 0)} • {total_games} games</div>
+                <div class="user-details">
+                    <div class="user-name">{user_data.get('in_game_name', 'Player')}</div>
+                    <div class="user-subtitle">Member for {days_ago} days • {total_games} games</div>
                 </div>
+                { '<span class="admin-badge">👑 ADMIN</span>' if is_admin else '' }
                 <a href="/logout" class="logout-btn">Logout</a>
             </div>
         </div>
         
         <div class="container">
-            <div class="stats-grid">
-                <div class="stat-card">
-                    <div class="stat-label">K/D Ratio</div>
-                    <div class="stat-value" style="color: { '#00ff9d' if kd >= 1.5 else '#ffd700' if kd >= 1 else '#ff6b6b' };">{kd:.2f}</div>
-                    <div style="color: #d4b3ff;">{user_data.get('total_kills', 0)} kills / {user_data.get('total_deaths', 0)} deaths</div>
+            <div class="profile-section">
+                <div class="profile-card">
+                    <div class="profile-header">
+                        <div class="avatar">
+                            <div class="avatar-content">👤</div>
+                        </div>
+                        <div class="profile-info">
+                            <h2>{user_data.get('in_game_name', 'Player')}</h2>
+                            <p>Joined on {created_str} • Prestige {user_data.get('prestige', 0)}</p>
+                        </div>
+                    </div>
+                    
+                    <div class="stats-grid">
+                        <div class="stat-item">
+                            <div class="stat-label">K/D Ratio</div>
+                            <div class="stat-value" style="color: { '#00ff9d' if kd >= 1.5 else '#ffd700' if kd >= 1 else '#ff6b6b' };">{kd:.2f}</div>
+                            <div style="color: #d4b3ff; font-size: 0.9rem;">{user_data.get('total_kills', 0)} kills / {user_data.get('total_deaths', 0)} deaths</div>
+                        </div>
+                        
+                        <div class="stat-item">
+                            <div class="stat-label">Win Rate</div>
+                            <div class="stat-value" style="color: { '#00ff9d' if win_rate >= 60 else '#ffd700' if win_rate >= 40 else '#ff6b6b' };">{win_rate:.1f}%</div>
+                            <div style="color: #d4b3ff; font-size: 0.9rem;">{user_data.get('wins', 0)} wins / {user_data.get('losses', 0)} losses</div>
+                        </div>
+                        
+                        <div class="stat-item">
+                            <div class="stat-label">Games Played</div>
+                            <div class="stat-value" style="color: #9d00ff;">{total_games}</div>
+                            <div style="color: #d4b3ff; font-size: 0.9rem;">Total matches completed</div>
+                        </div>
+                        
+                        <div class="stat-item">
+                            <div class="stat-label">Prestige Level</div>
+                            <div class="stat-value" style="color: #ffd700;">{user_data.get('prestige', 0)}</div>
+                            <div style="color: #d4b3ff; font-size: 0.9rem;">Current prestige rank</div>
+                        </div>
+                    </div>
                 </div>
                 
-                <div class="stat-card">
-                    <div class="stat-label">Win Rate</div>
-                    <div class="stat-value" style="color: { '#00ff9d' if win_rate >= 60 else '#ffd700' if win_rate >= 40 else '#ff6b6b' };">{win_rate:.1f}%</div>
-                    <div style="color: #d4b3ff;">{user_data.get('wins', 0)} wins / {user_data.get('losses', 0)} losses</div>
-                </div>
-                
-                <div class="stat-card">
-                    <div class="stat-label">Games Played</div>
-                    <div class="stat-value" style="color: #9d00ff;">{total_games}</div>
-                    <div style="color: #d4b3ff;">Total matches completed</div>
-                </div>
-            </div>
-            
-            <div class="key-section">
-                <h2 style="color: #ff00ff; margin-bottom: 10px; font-size: 2rem; text-shadow: 0 0 15px rgba(255, 0, 255, 0.5);">Your API Key</h2>
-                <p style="color: #b19cd9; margin-bottom: 20px; font-size: 1.1rem;">
-                    Keep this key secure. Do not share it with anyone.
-                </p>
-                
-                <div class="key-display" id="apiKeyDisplay" onclick="revealKey()">
-                    {session['user_key']}
-                </div>
-                
-                <div class="action-buttons">
-                    <button class="action-btn" onclick="copyKey()">
-                        📋 Copy Key
-                    </button>
-                    { '<button class="action-btn admin" onclick="changeKey()">🔑 Change Key</button>' if is_admin else '' }
-                    <button class="action-btn" onclick="refreshStats()">
-                        🔄 Refresh Stats
-                    </button>
-                    <button class="action-btn" onclick="createTicket()">
-                        🎫 Create Ticket
-                    </button>
+                <div class="key-card">
+                    <h3>🔑 Your API Key</h3>
+                    <p style="color: #b19cd9; margin-bottom: 20px; line-height: 1.6;">
+                        Keep this key secure. Use it to access your dashboard and API features.
+                        Do not share it with anyone.
+                    </p>
+                    
+                    <div class="key-display" id="apiKeyDisplay" onclick="revealKey()">
+                        {session['user_key']}
+                    </div>
+                    
+                    <div class="action-buttons">
+                        <button class="action-btn" onclick="copyKey()">
+                            <span>📋</span> Copy Key
+                        </button>
+                        { '<button class="action-btn admin" onclick="changeKey()"><span>🔑</span> Change Key</button>' if is_admin else '' }
+                        <button class="action-btn" onclick="createTicket()">
+                            <span>🎫</span> Create Ticket
+                        </button>
+                    </div>
                 </div>
             </div>
             
             <div class="tickets-section">
-                <h2 style="color: #ff00ff; margin-bottom: 30px; font-size: 2rem; text-shadow: 0 0 15px rgba(255, 0, 255, 0.5);">Your Open Tickets</h2>
-                {tickets_html}
+                <h3>🎫 Your Open Tickets</h3>
+                <div class="tickets-grid">
+                    {tickets_html}
+                </div>
             </div>
         </div>
         
         <div class="notification" id="notification"></div>
         
+        <script src="https://cdn.jsdelivr.net/particles.js/2.0.0/particles.min.js"></script>
         <script>
+            // Initialize particles
+            particlesJS('particles-js', {
+                particles: {
+                    number: { value: 60, density: { enable: true, value_area: 800 } },
+                    color: { value: ["#ff00ff", "#9d00ff", "#00d4ff"] },
+                    shape: { type: "circle" },
+                    opacity: { value: 0.6, random: true },
+                    size: { value: 2, random: true },
+                    line_linked: {
+                        enable: true,
+                        distance: 120,
+                        color: "#9d00ff",
+                        opacity: 0.3,
+                        width: 1
+                    },
+                    move: {
+                        enable: true,
+                        speed: 1.5,
+                        direction: "none",
+                        random: true,
+                        straight: false,
+                        out_mode: "out",
+                        bounce: false
+                    }
+                },
+                interactivity: {
+                    detect_on: "canvas",
+                    events: {
+                        onhover: { enable: true, mode: "repulse" },
+                        onclick: { enable: true, mode: "push" }
+                    }
+                },
+                retina_detect: true
+            });
+            
             function revealKey() {{
                 const display = document.getElementById('apiKeyDisplay');
                 display.classList.add('revealed');
+                showNotification('🔓 Key revealed');
             }}
             
             function copyKey() {{
                 const key = "{session['user_key']}";
-                navigator.clipboard.writeText(key);
-                showNotification('✅ API key copied to clipboard');
+                navigator.clipboard.writeText(key).then(() => {{
+                    showNotification('✅ API key copied to clipboard');
+                    
+                    // Animate copy button
+                    const btn = event.target.closest('.action-btn');
+                    if (btn) {{
+                        btn.style.background = 'linear-gradient(45deg, #00ff9d, #00d4ff)';
+                        setTimeout(() => {{
+                            btn.style.background = 'linear-gradient(45deg, #ff00ff, #9d00ff)';
+                        }}, 1000);
+                    }}
+                }});
             }}
             
-            function refreshStats() {{
-                fetch('/api/refresh-stats?key={session['user_key']}')
-                    .then(r => r.json())
-                    .then(data => {{
-                        if (data.success) {{
-                            showNotification('✅ Stats refreshed!');
-                            setTimeout(() => location.reload(), 1000);
-                        }}
-                    }})
-                    .catch(() => showNotification('❌ Error refreshing stats'));
+            function refreshProfile() {{
+                showNotification('🔄 Refreshing profile...');
+                setTimeout(() => location.reload(), 1000);
             }}
             
             function changeKey() {{
                 if (!confirm('Generate a new API key? Your current key will be invalidated.')) return;
+                
+                showNotification('🔑 Generating new key...');
                 
                 fetch('/api/change-key', {{
                     method: 'POST',
@@ -1799,17 +2287,7 @@ def dashboard():
             }}
             
             function createTicket() {{
-                alert('Use /ticket command in Discord to create tickets with categories.');
-            }}
-            
-            function viewTicket(ticketId) {{
-                alert('Ticket view feature coming soon! Use Discord channel for now.');
-            }}
-            
-            function closeTicket(ticketId) {{
-                if (confirm('Close this ticket?')) {{
-                    showNotification('🎫 Closing ticket...');
-                }}
+                showNotification('🎫 Use /ticket command in Discord to create tickets');
             }}
             
             function showNotification(message) {{
@@ -1817,14 +2295,86 @@ def dashboard():
                 notification.textContent = message;
                 notification.style.display = 'block';
                 
+                // Add particles effect for success
+                if (message.includes('✅') || message.includes('🔓')) {{
+                    particlesJS('particles-js', {
+                        particles: {
+                            number: { value: 80, density: { enable: true, value_area: 800 } },
+                            color: { value: "#00ff9d" },
+                            shape: { type: "circle" },
+                            opacity: { value: 0.8, random: true },
+                            size: { value: 3, random: true },
+                            line_linked: { enable: false },
+                            move: {
+                                enable: true,
+                                speed: 4,
+                                direction: "top",
+                                random: true,
+                                straight: false,
+                                out_mode: "out",
+                                bounce: false
+                            }
+                        },
+                        retina_detect: true
+                    });
+                    
+                    // Reset after 2 seconds
+                    setTimeout(() => {{
+                        particlesJS('particles-js', {
+                            particles: {
+                                number: { value: 60, density: { enable: true, value_area: 800 } },
+                                color: { value: ["#ff00ff", "#9d00ff", "#00d4ff"] },
+                                shape: { type: "circle" },
+                                opacity: { value: 0.6, random: true },
+                                size: { value: 2, random: true },
+                                line_linked: {
+                                    enable: true,
+                                    distance: 120,
+                                    color: "#9d00ff",
+                                    opacity: 0.3,
+                                    width: 1
+                                },
+                                move: {
+                                    enable: true,
+                                    speed: 1.5,
+                                    direction: "none",
+                                    random: true,
+                                    straight: false,
+                                    out_mode: "out",
+                                    bounce: false
+                                }
+                            },
+                            interactivity: {
+                                detect_on: "canvas",
+                                events: {
+                                    onhover: { enable: true, mode: "repulse" },
+                                    onclick: { enable: true, mode: "push" }
+                                }
+                            },
+                            retina_detect: true
+                        });
+                    }}, 2000);
+                }}
+                
                 setTimeout(() => {{
                     notification.style.display = 'none';
                 }}, 3000);
             }}
             
-            document.addEventListener('DOMContentLoaded', function() {{
-                // Auto-refresh every 5 minutes
-                setInterval(refreshStats, 300000);
+            // Auto-refresh profile every 2 minutes
+            setInterval(refreshProfile, 120000);
+            
+            // Add hover effect to stat cards
+            document.querySelectorAll('.stat-item').forEach(card => {{
+                card.addEventListener('mouseenter', () => {{
+                    const value = card.querySelector('.stat-value');
+                    const color = getComputedStyle(value).color;
+                    card.style.borderColor = color;
+                }});
+                
+                card.addEventListener('mouseleave', () => {{
+                    card.style.borderColor = 'rgba(157, 0, 255, 0.2)';
+                }});
             }});
         </script>
     </body>
@@ -1842,7 +2392,7 @@ def check_admin():
     if not api_key:
         return jsonify({"is_admin": False})
     
-    user_data = validate_api_key(api_key)
+    user_data = validate_api_key(api_key.upper())
     if not user_data:
         return jsonify({"is_admin": False})
     
@@ -1852,7 +2402,7 @@ def check_admin():
 def change_key():
     """Change API key (admin only)"""
     data = request.get_json()
-    api_key = data.get('api_key')
+    api_key = data.get('api_key', '').upper()
     
     if not api_key:
         return jsonify({"success": False, "error": "Missing API key"})
@@ -1879,7 +2429,7 @@ def change_key():
 @app.route('/api/refresh-stats')
 def refresh_stats():
     """Refresh player stats"""
-    api_key = request.args.get('key')
+    api_key = request.args.get('key', '').upper()
     if not api_key:
         return jsonify({"error": "No key provided"}), 401
     
@@ -1887,7 +2437,7 @@ def refresh_stats():
     if not user_data:
         return jsonify({"error": "Invalid key"}), 401
     
-    return jsonify({"success": True})
+    return jsonify({"success": True, "message": "Stats refreshed"})
 
 @app.route('/api/stats')
 def api_stats():
@@ -1914,7 +2464,7 @@ def health():
     return jsonify({
         "status": "healthy" if bot_active else "offline",
         "bot_active": bot_active,
-        "service": "GOBLIN Bot v6.0",
+        "service": "GOBLIN Bot v7.0",
         "timestamp": datetime.utcnow().isoformat()
     })
 
@@ -1926,7 +2476,7 @@ if __name__ == '__main__':
     init_db()
     
     print(f"\n{'='*60}")
-    print("🎮 GOBLIN BOT - DARK MODE PINK/PURPLE EDITION")
+    print("🎮 GOBLIN BOT - ENHANCED EDITION")
     print(f"{'='*60}")
     
     if test_discord_token():
@@ -1941,35 +2491,42 @@ if __name__ == '__main__':
         print("❌ Discord token not set or invalid")
     
     print(f"\n🌐 Web Interface: http://localhost:{port}")
-    print(f"🎨 Design: Dark mode Pink/Purple theme")
+    print(f"🎨 Design: Animated dark theme with particles")
     
     print(f"\n🎮 Discord Commands:")
-    print(f"   /ping - Check bot status")
-    print(f"   /register [name] - Get API key (shown in Discord)")
+    print(f"   /ping - Check bot status (with toxic responses)")
+    print(f"   /register [name] - Get API key")
+    print(f"   /profile - Show your profile and stats")
     print(f"   /key - Show your API key")
     print(f"   /ticket [issue] [category] - Create private ticket")
-    print(f"   /close - Close current ticket")
-    print(f"   /stats - View your stats")
+    print(f"   /close - Close current ticket (deletes channel)")
     
     print(f"\n🎫 Ticket System:")
-    print(f"   • Short channel names: ticket-1234")
+    print(f"   • Channels deleted when tickets are closed")
     print(f"   • Category options: Bug, Feature, Account, Tech, Other")
     print(f"   • Close button in ticket channel")
     print(f"   • Private channels (user + mods only)")
     print(f"   • Webhook notifications: {'Enabled' if TICKET_WEBHOOK else 'Disabled'}")
     
     print(f"\n🔐 Security Features:")
-    print(f"   • API keys shown with /register and /key")
-    print(f"   • Keys hidden in dashboard (click to reveal)")
+    print(f"   • Improved API key validation")
+    print(f"   • Session management with expiration")
     print(f"   • Admin-only key changes")
-    print(f"   • Private ticket channels")
+    print(f"   • Secure ticket channels")
+    
+    print(f"\n🎨 UI Features:")
+    print(f"   • Animated particle backgrounds")
+    print(f"   • Dark theme with pink/purple accents")
+    print(f"   • Profile view with stats")
+    print(f"   • Interactive elements with hover effects")
     
     print(f"\n💡 How it works:")
     print(f"   1. Use /register in Discord to get API key")
     print(f"   2. Use /key to see your key anytime")
-    print(f"   3. Login to dark mode dashboard")
-    print(f"   4. Use /ticket for private support")
-    print(f"   5. Click close button in ticket channel")
+    print(f"   3. Login to animated dashboard")
+    print(f"   4. View your profile and stats")
+    print(f"   5. Use /ticket for private support")
+    print(f"   6. Close tickets deletes the channel")
     
     print(f"\n🔧 Environment Variables:")
     print(f"   MOD_ROLE_ID={MOD_ROLE_ID or 'Not set'}")
