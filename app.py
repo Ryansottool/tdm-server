@@ -941,7 +941,7 @@ def before_request():
             session['user_data'] = user_data
 
 # =============================================================================
-# WEB INTERFACE - ANIMATED BACKGROUND
+# WEB INTERFACE - SIMPLIFIED TO AVOID F-STRING ISSUES
 # =============================================================================
 
 @app.route('/')
@@ -1502,7 +1502,7 @@ def logout():
 
 @app.route('/dashboard')
 def dashboard():
-    """Profile Dashboard with animated background"""
+    """Profile Dashboard - SIMPLIFIED to avoid f-string issues"""
     if 'user_key' not in session:
         return redirect(url_for('home'))
     
@@ -1545,841 +1545,832 @@ def dashboard():
     ).fetchall()
     conn.close()
     
+    # Build tickets HTML - Keep it simple
     tickets_html = ''
     for ticket in tickets:
         category_info = next((c for c in TICKET_CATEGORIES if c["name"] == ticket['category']), TICKET_CATEGORIES[-1])
         color_hex = f"#{hex(category_info['color'])[2:].zfill(6)}"
-        tickets_html += f'''
-        <div class="ticket-card">
-            <div class="ticket-header">
-                <div class="ticket-title">
-                    <span class="ticket-emoji">{category_info['emoji']}</span>
-                    <strong>TICKET-{ticket['ticket_id']}</strong>
-                </div>
-                <span class="status-open">OPEN</span>
-            </div>
-            <p class="ticket-issue">{ticket['issue'][:100]}...</p>
-            <div class="ticket-footer">
-                <span class="ticket-category" style="color: {color_hex};">{ticket['category']}</span>
-                <span class="ticket-date">{ticket['created_at'][:10]}</span>
-            </div>
-        </div>
-        '''
+        tickets_html += f'<div class="ticket-card"><div class="ticket-header"><div class="ticket-title"><span class="ticket-emoji">{category_info["emoji"]}</span><strong>TICKET-{ticket["ticket_id"]}</strong></div><span class="status-open">OPEN</span></div><p class="ticket-issue">{ticket["issue"][:100]}...</p><div class="ticket-footer"><span class="ticket-category" style="color: {color_hex};">{ticket["category"]}</span><span class="ticket-date">{ticket["created_at"][:10]}</span></div></div>'
     
     if not tickets_html:
         tickets_html = '<div class="no-tickets"><span>🎉</span><p>No open tickets</p></div>'
     
-    return f'''
-    <!DOCTYPE html>
-    <html>
-    <head>
-        <title>GOBLIN Profile</title>
-        <meta charset="UTF-8">
-        <meta name="viewport" content="width=device-width, initial-scale=1.0">
-        <style>
-            * {{
-                margin: 0;
-                padding: 0;
-                box-sizing: border-box;
-            }}
-            
-            body {{
-                font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
-                background: #000;
-                color: #fff;
-                min-height: 100vh;
-                overflow-x: hidden;
-                position: relative;
-            }}
-            
-            #particles-js {{
-                position: fixed;
-                width: 100%;
-                height: 100%;
-                top: 0;
-                left: 0;
-                z-index: -1;
-                background: radial-gradient(ellipse at center, #0a0015 0%, #000000 70%);
-            }}
-            
-            .header {{
-                background: rgba(15, 5, 30, 0.9);
-                backdrop-filter: blur(25px);
-                border-bottom: 3px solid #ff00ff;
-                padding: 25px 50px;
-                display: flex;
-                justify-content: space-between;
-                align-items: center;
-                position: sticky;
-                top: 0;
-                z-index: 100;
-                box-shadow: 0 10px 50px rgba(0, 0, 0, 0.7);
-            }}
-            
-            .logo {{
-                font-size: 2.2rem;
-                font-weight: 900;
-                background: linear-gradient(45deg, #ff00ff, #9d00ff);
-                -webkit-background-clip: text;
-                -webkit-text-fill-color: transparent;
-                text-shadow: 0 0 25px rgba(255, 0, 255, 0.4);
-                letter-spacing: 1px;
-                font-family: 'Arial Black', sans-serif;
-            }}
-            
-            .user-info {{
-                display: flex;
-                align-items: center;
-                gap: 30px;
-            }}
-            
-            .user-details {{
-                text-align: right;
-            }}
-            
-            .user-name {{
-                font-size: 1.4rem;
-                color: #ff00ff;
-                font-weight: bold;
-                margin-bottom: 5px;
-                text-shadow: 0 0 15px rgba(255, 0, 255, 0.5);
-            }}
-            
-            .user-subtitle {{
-                color: #b19cd9;
-                font-size: 0.9rem;
-                font-weight: 300;
-            }}
-            
-            .admin-badge {{
-                background: linear-gradient(45deg, #ff00ff, #9d00ff);
-                color: white;
-                padding: 8px 20px;
-                border-radius: 25px;
-                font-size: 0.9rem;
-                font-weight: bold;
-                box-shadow: 0 5px 20px rgba(255, 0, 255, 0.4);
-                animation: glow 2s infinite;
-            }}
-            
-            @keyframes glow {{
-                0%, 100% {{ box-shadow: 0 5px 20px rgba(255, 0, 255, 0.4); }}
-                50% {{ box-shadow: 0 5px 30px rgba(255, 0, 255, 0.7); }}
-            }}
-            
-            .logout-btn {{
-                padding: 12px 28px;
-                background: linear-gradient(45deg, #ff416c, #ff4b2b);
-                color: white;
-                border: none;
-                border-radius: 15px;
-                font-weight: bold;
-                cursor: pointer;
-                text-decoration: none;
-                transition: all 0.3s;
-                box-shadow: 0 8px 25px rgba(255, 65, 108, 0.4);
-                font-family: 'Segoe UI', sans-serif;
-                letter-spacing: 1px;
-            }}
-            
-            .logout-btn:hover {{
-                transform: translateY(-5px);
-                box-shadow: 0 15px 35px rgba(255, 65, 108, 0.6);
-            }}
-            
-            .container {{
-                max-width: 1300px;
-                margin: 0 auto;
-                padding: 50px;
-            }}
-            
+    # Determine colors based on stats
+    kd_color = '#00ff9d' if kd >= 1.5 else '#ffd700' if kd >= 1 else '#ff6b6b'
+    win_rate_color = '#00ff9d' if win_rate >= 60 else '#ffd700' if win_rate >= 40 else '#ff6b6b'
+    
+    # Build the HTML response
+    html = f'''<!DOCTYPE html>
+<html>
+<head>
+    <title>GOBLIN Profile</title>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <style>
+        * {{
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }}
+        
+        body {{
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background: #000;
+            color: #fff;
+            min-height: 100vh;
+            overflow-x: hidden;
+            position: relative;
+        }}
+        
+        #particles-js {{
+            position: fixed;
+            width: 100%;
+            height: 100%;
+            top: 0;
+            left: 0;
+            z-index: -1;
+            background: radial-gradient(ellipse at center, #0a0015 0%, #000000 70%);
+        }}
+        
+        .header {{
+            background: rgba(15, 5, 30, 0.9);
+            backdrop-filter: blur(25px);
+            border-bottom: 3px solid #ff00ff;
+            padding: 25px 50px;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            position: sticky;
+            top: 0;
+            z-index: 100;
+            box-shadow: 0 10px 50px rgba(0, 0, 0, 0.7);
+        }}
+        
+        .logo {{
+            font-size: 2.2rem;
+            font-weight: 900;
+            background: linear-gradient(45deg, #ff00ff, #9d00ff);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            text-shadow: 0 0 25px rgba(255, 0, 255, 0.4);
+            letter-spacing: 1px;
+            font-family: 'Arial Black', sans-serif;
+        }}
+        
+        .user-info {{
+            display: flex;
+            align-items: center;
+            gap: 30px;
+        }}
+        
+        .user-details {{
+            text-align: right;
+        }}
+        
+        .user-name {{
+            font-size: 1.4rem;
+            color: #ff00ff;
+            font-weight: bold;
+            margin-bottom: 5px;
+            text-shadow: 0 0 15px rgba(255, 0, 255, 0.5);
+        }}
+        
+        .user-subtitle {{
+            color: #b19cd9;
+            font-size: 0.9rem;
+            font-weight: 300;
+        }}
+        
+        .admin-badge {{
+            background: linear-gradient(45deg, #ff00ff, #9d00ff);
+            color: white;
+            padding: 8px 20px;
+            border-radius: 25px;
+            font-size: 0.9rem;
+            font-weight: bold;
+            box-shadow: 0 5px 20px rgba(255, 0, 255, 0.4);
+            animation: glow 2s infinite;
+        }}
+        
+        @keyframes glow {{
+            0%, 100% {{ box-shadow: 0 5px 20px rgba(255, 0, 255, 0.4); }}
+            50% {{ box-shadow: 0 5px 30px rgba(255, 0, 255, 0.7); }}
+        }}
+        
+        .logout-btn {{
+            padding: 12px 28px;
+            background: linear-gradient(45deg, #ff416c, #ff4b2b);
+            color: white;
+            border: none;
+            border-radius: 15px;
+            font-weight: bold;
+            cursor: pointer;
+            text-decoration: none;
+            transition: all 0.3s;
+            box-shadow: 0 8px 25px rgba(255, 65, 108, 0.4);
+            font-family: 'Segoe UI', sans-serif;
+            letter-spacing: 1px;
+        }}
+        
+        .logout-btn:hover {{
+            transform: translateY(-5px);
+            box-shadow: 0 15px 35px rgba(255, 65, 108, 0.6);
+        }}
+        
+        .container {{
+            max-width: 1300px;
+            margin: 0 auto;
+            padding: 50px;
+        }}
+        
+        .profile-section {{
+            display: grid;
+            grid-template-columns: 1fr 400px;
+            gap: 40px;
+            margin-bottom: 50px;
+        }}
+        
+        @media (max-width: 1100px) {{
             .profile-section {{
-                display: grid;
-                grid-template-columns: 1fr 400px;
-                gap: 40px;
-                margin-bottom: 50px;
+                grid-template-columns: 1fr;
             }}
-            
-            @media (max-width: 1100px) {{
-                .profile-section {{
-                    grid-template-columns: 1fr;
-                }}
-            }}
-            
-            .profile-card {{
-                background: rgba(25, 10, 50, 0.7);
-                backdrop-filter: blur(25px);
-                border-radius: 25px;
-                padding: 50px;
-                border: 1px solid rgba(255, 0, 255, 0.3);
-                box-shadow: 0 25px 60px rgba(157, 0, 255, 0.2),
-                            inset 0 1px 0 rgba(255, 255, 255, 0.1);
-                animation: slideUp 0.8s ease-out;
-            }}
-            
-            .profile-header {{
-                display: flex;
-                align-items: center;
-                gap: 30px;
-                margin-bottom: 40px;
-                padding-bottom: 30px;
-                border-bottom: 2px solid rgba(157, 0, 255, 0.3);
-            }}
-            
-            .avatar {{
-                width: 100px;
-                height: 100px;
-                background: linear-gradient(45deg, #ff00ff, #9d00ff);
-                border-radius: 50%;
-                display: flex;
-                align-items: center;
-                justify-content: center;
-                font-size: 2.5rem;
-                color: white;
-                box-shadow: 0 10px 30px rgba(255, 0, 255, 0.4);
-                animation: rotate 20s linear infinite;
-            }}
-            
-            @keyframes rotate {{
-                from {{ transform: rotate(0deg); }}
-                to {{ transform: rotate(360deg); }}
-            }}
-            
-            .avatar-content {{
-                transform: rotate(-360deg);
-                animation: counterRotate 20s linear infinite;
-            }}
-            
-            @keyframes counterRotate {{
-                from {{ transform: rotate(0deg); }}
-                to {{ transform: rotate(-360deg); }}
-            }}
-            
-            .profile-info h2 {{
-                font-size: 2.5rem;
-                margin-bottom: 10px;
-                background: linear-gradient(45deg, #ff00ff, #9d00ff);
-                -webkit-background-clip: text;
-                -webkit-text-fill-color: transparent;
-            }}
-            
-            .profile-info p {{
-                color: #b19cd9;
-                font-size: 1.1rem;
-            }}
-            
-            .stats-grid {{
-                display: grid;
-                grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
-                gap: 25px;
-                margin-bottom: 40px;
-            }}
-            
-            .stat-item {{
-                background: rgba(0, 0, 0, 0.4);
-                border-radius: 20px;
-                padding: 30px;
-                text-align: center;
-                border: 1px solid rgba(157, 0, 255, 0.2);
-                transition: all 0.4s;
-                position: relative;
-                overflow: hidden;
-            }}
-            
-            .stat-item:hover {{
-                transform: translateY(-10px);
-                border-color: rgba(255, 0, 255, 0.5);
-                box-shadow: 0 20px 40px rgba(255, 0, 255, 0.2);
-            }}
-            
-            .stat-item::before {{
-                content: '';
-                position: absolute;
-                top: 0;
-                left: 0;
-                right: 0;
-                height: 3px;
-                background: linear-gradient(90deg, #ff00ff, #9d00ff);
-            }}
-            
-            .stat-value {{
-                font-size: 3rem;
-                font-weight: 900;
-                margin: 15px 0;
-                font-family: 'Arial Black', sans-serif;
-                text-shadow: 0 0 20px currentColor;
-            }}
-            
-            .stat-label {{
-                color: #b19cd9;
-                font-size: 1rem;
-                text-transform: uppercase;
-                letter-spacing: 2px;
-                margin-bottom: 10px;
-                font-weight: 300;
-            }}
-            
-            .key-card {{
-                background: rgba(25, 10, 50, 0.7);
-                backdrop-filter: blur(25px);
-                border-radius: 25px;
-                padding: 50px;
-                border: 1px solid rgba(0, 212, 255, 0.3);
-                box-shadow: 0 25px 60px rgba(0, 212, 255, 0.15),
-                            inset 0 1px 0 rgba(255, 255, 255, 0.1);
-                animation: slideUp 0.8s ease-out 0.2s both;
-            }}
-            
-            .key-card h3 {{
-                font-size: 1.8rem;
-                margin-bottom: 25px;
-                color: #00d4ff;
-                text-shadow: 0 0 15px rgba(0, 212, 255, 0.5);
-            }}
-            
-            .key-display {{
-                background: rgba(0, 0, 0, 0.6);
-                border: 2px solid rgba(157, 0, 255, 0.5);
-                border-radius: 20px;
-                padding: 30px;
-                margin: 30px 0;
-                font-family: 'Courier New', monospace;
-                color: #00ff9d;
-                text-align: center;
-                cursor: pointer;
-                position: relative;
-                overflow: hidden;
-                letter-spacing: 3px;
-                font-size: 1.5rem;
-                text-shadow: 0 0 10px #00ff9d;
-                box-shadow: 0 10px 30px rgba(0, 255, 157, 0.1);
-                transition: all 0.3s;
-            }}
-            
-            .key-display:hover {{
-                transform: scale(1.02);
-                box-shadow: 0 15px 40px rgba(0, 255, 157, 0.2);
-            }}
-            
-            .key-display::before {{
-                content: 'Click to reveal';
-                position: absolute;
-                top: 0;
-                left: 0;
-                right: 0;
-                bottom: 0;
-                background: rgba(0, 0, 0, 0.95);
-                display: flex;
-                align-items: center;
-                justify-content: center;
-                font-family: sans-serif;
-                font-size: 1.3rem;
-                color: #b19cd9;
-                backdrop-filter: blur(5px);
-                border-radius: 18px;
-                transition: opacity 0.3s;
-            }}
-            
-            .key-display.revealed::before {{
-                opacity: 0;
-                pointer-events: none;
-            }}
-            
-            .action-buttons {{
-                display: flex;
+        }}
+        
+        .profile-card {{
+            background: rgba(25, 10, 50, 0.7);
+            backdrop-filter: blur(25px);
+            border-radius: 25px;
+            padding: 50px;
+            border: 1px solid rgba(255, 0, 255, 0.3);
+            box-shadow: 0 25px 60px rgba(157, 0, 255, 0.2),
+                        inset 0 1px 0 rgba(255, 255, 255, 0.1);
+            animation: slideUp 0.8s ease-out;
+        }}
+        
+        .profile-header {{
+            display: flex;
+            align-items: center;
+            gap: 30px;
+            margin-bottom: 40px;
+            padding-bottom: 30px;
+            border-bottom: 2px solid rgba(157, 0, 255, 0.3);
+        }}
+        
+        .avatar {{
+            width: 100px;
+            height: 100px;
+            background: linear-gradient(45deg, #ff00ff, #9d00ff);
+            border-radius: 50%;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 2.5rem;
+            color: white;
+            box-shadow: 0 10px 30px rgba(255, 0, 255, 0.4);
+            animation: rotate 20s linear infinite;
+        }}
+        
+        @keyframes rotate {{
+            from {{ transform: rotate(0deg); }}
+            to {{ transform: rotate(360deg); }}
+        }}
+        
+        .avatar-content {{
+            transform: rotate(-360deg);
+            animation: counterRotate 20s linear infinite;
+        }}
+        
+        @keyframes counterRotate {{
+            from {{ transform: rotate(0deg); }}
+            to {{ transform: rotate(-360deg); }}
+        }}
+        
+        .profile-info h2 {{
+            font-size: 2.5rem;
+            margin-bottom: 10px;
+            background: linear-gradient(45deg, #ff00ff, #9d00ff);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+        }}
+        
+        .profile-info p {{
+            color: #b19cd9;
+            font-size: 1.1rem;
+        }}
+        
+        .stats-grid {{
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+            gap: 25px;
+            margin-bottom: 40px;
+        }}
+        
+        .stat-item {{
+            background: rgba(0, 0, 0, 0.4);
+            border-radius: 20px;
+            padding: 30px;
+            text-align: center;
+            border: 1px solid rgba(157, 0, 255, 0.2);
+            transition: all 0.4s;
+            position: relative;
+            overflow: hidden;
+        }}
+        
+        .stat-item:hover {{
+            transform: translateY(-10px);
+            border-color: rgba(255, 0, 255, 0.5);
+            box-shadow: 0 20px 40px rgba(255, 0, 255, 0.2);
+        }}
+        
+        .stat-item::before {{
+            content: '';
+            position: absolute;
+            top: 0;
+            left: 0;
+            right: 0;
+            height: 3px;
+            background: linear-gradient(90deg, #ff00ff, #9d00ff);
+        }}
+        
+        .stat-value {{
+            font-size: 3rem;
+            font-weight: 900;
+            margin: 15px 0;
+            font-family: 'Arial Black', sans-serif;
+            text-shadow: 0 0 20px currentColor;
+        }}
+        
+        .stat-label {{
+            color: #b19cd9;
+            font-size: 1rem;
+            text-transform: uppercase;
+            letter-spacing: 2px;
+            margin-bottom: 10px;
+            font-weight: 300;
+        }}
+        
+        .key-card {{
+            background: rgba(25, 10, 50, 0.7);
+            backdrop-filter: blur(25px);
+            border-radius: 25px;
+            padding: 50px;
+            border: 1px solid rgba(0, 212, 255, 0.3);
+            box-shadow: 0 25px 60px rgba(0, 212, 255, 0.15),
+                        inset 0 1px 0 rgba(255, 255, 255, 0.1);
+            animation: slideUp 0.8s ease-out 0.2s both;
+        }}
+        
+        .key-card h3 {{
+            font-size: 1.8rem;
+            margin-bottom: 25px;
+            color: #00d4ff;
+            text-shadow: 0 0 15px rgba(0, 212, 255, 0.5);
+        }}
+        
+        .key-display {{
+            background: rgba(0, 0, 0, 0.6);
+            border: 2px solid rgba(157, 0, 255, 0.5);
+            border-radius: 20px;
+            padding: 30px;
+            margin: 30px 0;
+            font-family: 'Courier New', monospace;
+            color: #00ff9d;
+            text-align: center;
+            cursor: pointer;
+            position: relative;
+            overflow: hidden;
+            letter-spacing: 3px;
+            font-size: 1.5rem;
+            text-shadow: 0 0 10px #00ff9d;
+            box-shadow: 0 10px 30px rgba(0, 255, 157, 0.1);
+            transition: all 0.3s;
+        }}
+        
+        .key-display:hover {{
+            transform: scale(1.02);
+            box-shadow: 0 15px 40px rgba(0, 255, 157, 0.2);
+        }}
+        
+        .key-display::before {{
+            content: 'Click to reveal';
+            position: absolute;
+            top: 0;
+            left: 0;
+            right: 0;
+            bottom: 0;
+            background: rgba(0, 0, 0, 0.95);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-family: sans-serif;
+            font-size: 1.3rem;
+            color: #b19cd9;
+            backdrop-filter: blur(5px);
+            border-radius: 18px;
+            transition: opacity 0.3s;
+        }}
+        
+        .key-display.revealed::before {{
+            opacity: 0;
+            pointer-events: none;
+        }}
+        
+        .action-buttons {{
+            display: flex;
+            flex-direction: column;
+            gap: 20px;
+            margin-top: 40px;
+        }}
+        
+        .action-btn {{
+            padding: 20px;
+            background: linear-gradient(45deg, #ff00ff, #9d00ff);
+            color: white;
+            border: none;
+            border-radius: 15px;
+            font-weight: bold;
+            font-size: 16px;
+            cursor: pointer;
+            transition: all 0.3s;
+            text-decoration: none;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            gap: 15px;
+            letter-spacing: 1px;
+            font-family: 'Segoe UI', sans-serif;
+            box-shadow: 0 10px 30px rgba(157, 0, 255, 0.3);
+        }}
+        
+        .action-btn:hover {{
+            transform: translateY(-8px);
+            box-shadow: 0 20px 40px rgba(255, 0, 255, 0.5);
+            background: linear-gradient(45deg, #9d00ff, #ff00ff);
+        }}
+        
+        .action-btn.admin {{
+            background: linear-gradient(45deg, #00ff9d, #00d4ff);
+        }}
+        
+        .action-btn.admin:hover {{
+            box-shadow: 0 20px 40px rgba(0, 255, 157, 0.5);
+        }}
+        
+        .tickets-section {{
+            background: rgba(25, 10, 50, 0.7);
+            backdrop-filter: blur(25px);
+            border-radius: 25px;
+            padding: 50px;
+            margin-bottom: 50px;
+            border: 1px solid rgba(255, 0, 255, 0.3);
+            box-shadow: 0 25px 60px rgba(0, 0, 0, 0.3);
+            animation: slideUp 0.8s ease-out 0.4s both;
+        }}
+        
+        .tickets-section h3 {{
+            font-size: 2rem;
+            margin-bottom: 40px;
+            color: #ff00ff;
+            text-shadow: 0 0 20px rgba(255, 0, 255, 0.5);
+        }}
+        
+        .tickets-grid {{
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(350px, 1fr));
+            gap: 25px;
+        }}
+        
+        .ticket-card {{
+            background: rgba(20, 5, 40, 0.8);
+            border-radius: 20px;
+            padding: 30px;
+            border: 1px solid rgba(157, 0, 255, 0.2);
+            transition: all 0.3s;
+            box-shadow: 0 10px 30px rgba(0, 0, 0, 0.2);
+        }}
+        
+        .ticket-card:hover {{
+            transform: translateY(-10px);
+            border-color: rgba(255, 0, 255, 0.4);
+            box-shadow: 0 20px 40px rgba(255, 0, 255, 0.2);
+        }}
+        
+        .ticket-header {{
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 20px;
+        }}
+        
+        .ticket-title {{
+            display: flex;
+            align-items: center;
+            gap: 15px;
+        }}
+        
+        .ticket-emoji {{
+            font-size: 1.5rem;
+        }}
+        
+        .status-open {{
+            color: #00ff9d;
+            font-weight: bold;
+            font-size: 0.9rem;
+            padding: 5px 15px;
+            background: rgba(0, 255, 157, 0.1);
+            border-radius: 20px;
+            text-shadow: 0 0 10px #00ff9d;
+        }}
+        
+        .ticket-issue {{
+            color: #d4b3ff;
+            margin-bottom: 25px;
+            font-size: 1.1rem;
+            line-height: 1.5;
+        }}
+        
+        .ticket-footer {{
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            color: #888;
+            font-size: 0.9rem;
+        }}
+        
+        .ticket-category {{
+            font-weight: bold;
+        }}
+        
+        .no-tickets {{
+            grid-column: 1 / -1;
+            text-align: center;
+            padding: 60px;
+            color: #666;
+        }}
+        
+        .no-tickets span {{
+            font-size: 4rem;
+            display: block;
+            margin-bottom: 20px;
+            opacity: 0.5;
+        }}
+        
+        .notification {{
+            position: fixed;
+            bottom: 40px;
+            right: 40px;
+            background: linear-gradient(45deg, #00ff9d, #00d4ff);
+            color: #000;
+            padding: 25px 35px;
+            border-radius: 20px;
+            z-index: 1000;
+            display: none;
+            animation: slideInRight 0.5s ease-out;
+            font-weight: bold;
+            font-size: 1.1rem;
+            box-shadow: 0 15px 40px rgba(0, 255, 157, 0.5);
+            font-family: 'Segoe UI', sans-serif;
+        }}
+        
+        @keyframes slideInRight {{
+            from {{ transform: translateX(100%); opacity: 0; }}
+            to {{ transform: translateX(0); opacity: 1; }}
+        }}
+        
+        @keyframes slideUp {{
+            from {{ opacity: 0; transform: translateY(50px); }}
+            to {{ opacity: 1; transform: translateY(0); }}
+        }}
+        
+        @media (max-width: 768px) {{
+            .header {{
                 flex-direction: column;
                 gap: 20px;
-                margin-top: 40px;
-            }}
-            
-            .action-btn {{
-                padding: 20px;
-                background: linear-gradient(45deg, #ff00ff, #9d00ff);
-                color: white;
-                border: none;
-                border-radius: 15px;
-                font-weight: bold;
-                font-size: 16px;
-                cursor: pointer;
-                transition: all 0.3s;
-                text-decoration: none;
-                display: flex;
-                align-items: center;
-                justify-content: center;
-                gap: 15px;
-                letter-spacing: 1px;
-                font-family: 'Segoe UI', sans-serif;
-                box-shadow: 0 10px 30px rgba(157, 0, 255, 0.3);
-            }}
-            
-            .action-btn:hover {{
-                transform: translateY(-8px);
-                box-shadow: 0 20px 40px rgba(255, 0, 255, 0.5);
-                background: linear-gradient(45deg, #9d00ff, #ff00ff);
-            }}
-            
-            .action-btn.admin {{
-                background: linear-gradient(45deg, #00ff9d, #00d4ff);
-            }}
-            
-            .action-btn.admin:hover {{
-                box-shadow: 0 20px 40px rgba(0, 255, 157, 0.5);
-            }}
-            
-            .tickets-section {{
-                background: rgba(25, 10, 50, 0.7);
-                backdrop-filter: blur(25px);
-                border-radius: 25px;
-                padding: 50px;
-                margin-bottom: 50px;
-                border: 1px solid rgba(255, 0, 255, 0.3);
-                box-shadow: 0 25px 60px rgba(0, 0, 0, 0.3);
-                animation: slideUp 0.8s ease-out 0.4s both;
-            }}
-            
-            .tickets-section h3 {{
-                font-size: 2rem;
-                margin-bottom: 40px;
-                color: #ff00ff;
-                text-shadow: 0 0 20px rgba(255, 0, 255, 0.5);
-            }}
-            
-            .tickets-grid {{
-                display: grid;
-                grid-template-columns: repeat(auto-fit, minmax(350px, 1fr));
-                gap: 25px;
-            }}
-            
-            .ticket-card {{
-                background: rgba(20, 5, 40, 0.8);
-                border-radius: 20px;
-                padding: 30px;
-                border: 1px solid rgba(157, 0, 255, 0.2);
-                transition: all 0.3s;
-                box-shadow: 0 10px 30px rgba(0, 0, 0, 0.2);
-            }}
-            
-            .ticket-card:hover {{
-                transform: translateY(-10px);
-                border-color: rgba(255, 0, 255, 0.4);
-                box-shadow: 0 20px 40px rgba(255, 0, 255, 0.2);
-            }}
-            
-            .ticket-header {{
-                display: flex;
-                justify-content: space-between;
-                align-items: center;
-                margin-bottom: 20px;
-            }}
-            
-            .ticket-title {{
-                display: flex;
-                align-items: center;
-                gap: 15px;
-            }}
-            
-            .ticket-emoji {{
-                font-size: 1.5rem;
-            }}
-            
-            .status-open {{
-                color: #00ff9d;
-                font-weight: bold;
-                font-size: 0.9rem;
-                padding: 5px 15px;
-                background: rgba(0, 255, 157, 0.1);
-                border-radius: 20px;
-                text-shadow: 0 0 10px #00ff9d;
-            }}
-            
-            .ticket-issue {{
-                color: #d4b3ff;
-                margin-bottom: 25px;
-                font-size: 1.1rem;
-                line-height: 1.5;
-            }}
-            
-            .ticket-footer {{
-                display: flex;
-                justify-content: space-between;
-                align-items: center;
-                color: #888;
-                font-size: 0.9rem;
-            }}
-            
-            .ticket-category {{
-                font-weight: bold;
-            }}
-            
-            .no-tickets {{
-                grid-column: 1 / -1;
                 text-align: center;
-                padding: 60px;
-                color: #666;
+                padding: 20px;
             }}
-            
-            .no-tickets span {{
-                font-size: 4rem;
-                display: block;
-                margin-bottom: 20px;
-                opacity: 0.5;
+            .container {{
+                padding: 20px;
             }}
-            
-            .notification {{
-                position: fixed;
-                bottom: 40px;
-                right: 40px;
-                background: linear-gradient(45deg, #00ff9d, #00d4ff);
-                color: #000;
-                padding: 25px 35px;
-                border-radius: 20px;
-                z-index: 1000;
-                display: none;
-                animation: slideInRight 0.5s ease-out;
-                font-weight: bold;
-                font-size: 1.1rem;
-                box-shadow: 0 15px 40px rgba(0, 255, 157, 0.5);
-                font-family: 'Segoe UI', sans-serif;
+            .profile-section {{
+                gap: 20px;
             }}
-            
-            @keyframes slideInRight {{
-                from {{ transform: translateX(100%); opacity: 0; }}
-                to {{ transform: translateX(0); opacity: 1; }}
+            .profile-card, .key-card, .tickets-section {{
+                padding: 30px 20px;
             }}
-            
-            @keyframes slideUp {{
-                from {{ opacity: 0; transform: translateY(50px); }}
-                to {{ opacity: 1; transform: translateY(0); }}
+            .stats-grid {{
+                grid-template-columns: 1fr;
             }}
-            
-            @media (max-width: 768px) {{
-                .header {{
-                    flex-direction: column;
-                    gap: 20px;
-                    text-align: center;
-                    padding: 20px;
-                }}
-                .container {{
-                    padding: 20px;
-                }}
-                .profile-section {{
-                    gap: 20px;
-                }}
-                .profile-card, .key-card, .tickets-section {{
-                    padding: 30px 20px;
-                }}
-                .stats-grid {{
-                    grid-template-columns: 1fr;
-                }}
-                .tickets-grid {{
-                    grid-template-columns: 1fr;
-                }}
-                .avatar {{
-                    width: 80px;
-                    height: 80px;
-                    font-size: 2rem;
-                }}
-                .profile-info h2 {{
-                    font-size: 2rem;
-                }}
-                .key-display {{
-                    font-size: 1.2rem;
-                    padding: 20px;
-                }}
+            .tickets-grid {{
+                grid-template-columns: 1fr;
             }}
-            
-            .glow {{
-                position: fixed;
-                width: 400px;
-                height: 400px;
-                border-radius: 50%;
-                background: radial-gradient(circle, rgba(255, 0, 255, 0.15) 0%, transparent 70%);
-                filter: blur(80px);
-                animation: float 25s infinite linear;
-                z-index: -1;
+            .avatar {{
+                width: 80px;
+                height: 80px;
+                font-size: 2rem;
             }}
-            
-            @keyframes float {{
-                0% {{ transform: translate(0, 0) rotate(0deg); }}
-                33% {{ transform: translate(200px, 200px) rotate(120deg); }}
-                66% {{ transform: translate(-200px, 100px) rotate(240deg); }}
-                100% {{ transform: translate(0, 0) rotate(360deg); }}
+            .profile-info h2 {{
+                font-size: 2rem;
             }}
-        </style>
-    </head>
-    <body>
-        <div id="particles-js"></div>
+            .key-display {{
+                font-size: 1.2rem;
+                padding: 20px;
+            }}
+        }}
         
-        <!-- Floating glow effects -->
-        <div class="glow" style="top: 10%; left: 5%; animation-delay: 0s; background: radial-gradient(circle, rgba(157, 0, 255, 0.15) 0%, transparent 70%);"></div>
-        <div class="glow" style="top: 60%; right: 5%; animation-delay: -8s; background: radial-gradient(circle, rgba(0, 212, 255, 0.1) 0%, transparent 70%);"></div>
-        <div class="glow" style="bottom: 10%; left: 30%; animation-delay: -16s; background: radial-gradient(circle, rgba(255, 0, 255, 0.1) 0%, transparent 70%);"></div>
+        .glow {{
+            position: fixed;
+            width: 400px;
+            height: 400px;
+            border-radius: 50%;
+            background: radial-gradient(circle, rgba(255, 0, 255, 0.15) 0%, transparent 70%);
+            filter: blur(80px);
+            animation: float 25s infinite linear;
+            z-index: -1;
+        }}
         
-        <div class="header">
-            <div class="logo">GOBLIN PROFILE</div>
-            <div class="user-info">
-                <div class="user-details">
-                    <div class="user-name">{user_data.get('in_game_name', 'Player')}</div>
-                    <div class="user-subtitle">Member for {days_ago} days • {total_games} games</div>
-                </div>
-                { '<span class="admin-badge">👑 ADMIN</span>' if is_admin else '' }
-                <a href="/logout" class="logout-btn">Logout</a>
+        @keyframes float {{
+            0% {{ transform: translate(0, 0) rotate(0deg); }}
+            33% {{ transform: translate(200px, 200px) rotate(120deg); }}
+            66% {{ transform: translate(-200px, 100px) rotate(240deg); }}
+            100% {{ transform: translate(0, 0) rotate(360deg); }}
+        }}
+    </style>
+</head>
+<body>
+    <div id="particles-js"></div>
+    
+    <!-- Floating glow effects -->
+    <div class="glow" style="top: 10%; left: 5%; animation-delay: 0s; background: radial-gradient(circle, rgba(157, 0, 255, 0.15) 0%, transparent 70%);"></div>
+    <div class="glow" style="top: 60%; right: 5%; animation-delay: -8s; background: radial-gradient(circle, rgba(0, 212, 255, 0.1) 0%, transparent 70%);"></div>
+    <div class="glow" style="bottom: 10%; left: 30%; animation-delay: -16s; background: radial-gradient(circle, rgba(255, 0, 255, 0.1) 0%, transparent 70%);"></div>
+    
+    <div class="header">
+        <div class="logo">GOBLIN PROFILE</div>
+        <div class="user-info">
+            <div class="user-details">
+                <div class="user-name">{user_data.get('in_game_name', 'Player')}</div>
+                <div class="user-subtitle">Member for {days_ago} days • {total_games} games</div>
             </div>
+            { '<span class="admin-badge">👑 ADMIN</span>' if is_admin else '' }
+            <a href="/logout" class="logout-btn">Logout</a>
         </div>
-        
-        <div class="container">
-            <div class="profile-section">
-                <div class="profile-card">
-                    <div class="profile-header">
-                        <div class="avatar">
-                            <div class="avatar-content">👤</div>
-                        </div>
-                        <div class="profile-info">
-                            <h2>{user_data.get('in_game_name', 'Player')}</h2>
-                            <p>Joined on {created_str} • Prestige {user_data.get('prestige', 0)}</p>
-                        </div>
+    </div>
+    
+    <div class="container">
+        <div class="profile-section">
+            <div class="profile-card">
+                <div class="profile-header">
+                    <div class="avatar">
+                        <div class="avatar-content">👤</div>
                     </div>
-                    
-                    <div class="stats-grid">
-                        <div class="stat-item">
-                            <div class="stat-label">K/D Ratio</div>
-                            <div class="stat-value" style="color: { '#00ff9d' if kd >= 1.5 else '#ffd700' if kd >= 1 else '#ff6b6b' };">{kd:.2f}</div>
-                            <div style="color: #d4b3ff; font-size: 0.9rem;">{user_data.get('total_kills', 0)} kills / {user_data.get('total_deaths', 0)} deaths</div>
-                        </div>
-                        
-                        <div class="stat-item">
-                            <div class="stat-label">Win Rate</div>
-                            <div class="stat-value" style="color: { '#00ff9d' if win_rate >= 60 else '#ffd700' if win_rate >= 40 else '#ff6b6b' };">{win_rate:.1f}%</div>
-                            <div style="color: #d4b3ff; font-size: 0.9rem;">{user_data.get('wins', 0)} wins / {user_data.get('losses', 0)} losses</div>
-                        </div>
-                        
-                        <div class="stat-item">
-                            <div class="stat-label">Games Played</div>
-                            <div class="stat-value" style="color: #9d00ff;">{total_games}</div>
-                            <div style="color: #d4b3ff; font-size: 0.9rem;">Total matches completed</div>
-                        </div>
-                        
-                        <div class="stat-item">
-                            <div class="stat-label">Prestige Level</div>
-                            <div class="stat-value" style="color: #ffd700;">{user_data.get('prestige', 0)}</div>
-                            <div style="color: #d4b3ff; font-size: 0.9rem;">Current prestige rank</div>
-                        </div>
+                    <div class="profile-info">
+                        <h2>{user_data.get('in_game_name', 'Player')}</h2>
+                        <p>Joined on {created_str} • Prestige {user_data.get('prestige', 0)}</p>
                     </div>
                 </div>
                 
-                <div class="key-card">
-                    <h3>🔑 Your API Key</h3>
-                    <p style="color: #b19cd9; margin-bottom: 20px; line-height: 1.6;">
-                        Keep this key secure. Use it to access your dashboard and API features.
-                        Do not share it with anyone.
-                    </p>
-                    
-                    <div class="key-display" id="apiKeyDisplay" onclick="revealKey()">
-                        {session['user_key']}
+                <div class="stats-grid">
+                    <div class="stat-item">
+                        <div class="stat-label">K/D Ratio</div>
+                        <div class="stat-value" style="color: {kd_color};">{kd:.2f}</div>
+                        <div style="color: #d4b3ff; font-size: 0.9rem;">{user_data.get('total_kills', 0)} kills / {user_data.get('total_deaths', 0)} deaths</div>
                     </div>
                     
-                    <div class="action-buttons">
-                        <button class="action-btn" onclick="copyKey()">
-                            <span>📋</span> Copy Key
-                        </button>
-                        { '<button class="action-btn admin" onclick="changeKey()"><span>🔑</span> Change Key</button>' if is_admin else '' }
-                        <button class="action-btn" onclick="createTicket()">
-                            <span>🎫</span> Create Ticket
-                        </button>
+                    <div class="stat-item">
+                        <div class="stat-label">Win Rate</div>
+                        <div class="stat-value" style="color: {win_rate_color};">{win_rate:.1f}%</div>
+                        <div style="color: #d4b3ff; font-size: 0.9rem;">{user_data.get('wins', 0)} wins / {user_data.get('losses', 0)} losses</div>
+                    </div>
+                    
+                    <div class="stat-item">
+                        <div class="stat-label">Games Played</div>
+                        <div class="stat-value" style="color: #9d00ff;">{total_games}</div>
+                        <div style="color: #d4b3ff; font-size: 0.9rem;">Total matches completed</div>
+                    </div>
+                    
+                    <div class="stat-item">
+                        <div class="stat-label">Prestige Level</div>
+                        <div class="stat-value" style="color: #ffd700;">{user_data.get('prestige', 0)}</div>
+                        <div style="color: #d4b3ff; font-size: 0.9rem;">Current prestige rank</div>
                     </div>
                 </div>
             </div>
             
-            <div class="tickets-section">
-                <h3>🎫 Your Open Tickets</h3>
-                <div class="tickets-grid">
-                    {tickets_html}
+            <div class="key-card">
+                <h3>🔑 Your API Key</h3>
+                <p style="color: #b19cd9; margin-bottom: 20px; line-height: 1.6;">
+                    Keep this key secure. Use it to access your dashboard and API features.
+                    Do not share it with anyone.
+                </p>
+                
+                <div class="key-display" id="apiKeyDisplay" onclick="revealKey()">
+                    {session['user_key']}
+                </div>
+                
+                <div class="action-buttons">
+                    <button class="action-btn" onclick="copyKey()">
+                        <span>📋</span> Copy Key
+                    </button>
+                    { '<button class="action-btn admin" onclick="changeKey()"><span>🔑</span> Change Key</button>' if is_admin else '' }
+                    <button class="action-btn" onclick="createTicket()">
+                        <span>🎫</span> Create Ticket
+                    </button>
                 </div>
             </div>
         </div>
         
-        <div class="notification" id="notification"></div>
+        <div class="tickets-section">
+            <h3>🎫 Your Open Tickets</h3>
+            <div class="tickets-grid">
+                {tickets_html}
+            </div>
+        </div>
+    </div>
+    
+    <div class="notification" id="notification"></div>
+    
+    <script src="https://cdn.jsdelivr.net/particles.js/2.0.0/particles.min.js"></script>
+    <script>
+        // Initialize particles - SIMPLIFIED VERSION
+        particlesJS('particles-js', {{
+            particles: {{
+                number: {{ value: 60, density: {{ enable: true, value_area: 800 }} }},
+                color: {{ value: ["#ff00ff", "#9d00ff", "#00d4ff"] }},
+                shape: {{ type: "circle" }},
+                opacity: {{ value: 0.6, random: true }},
+                size: {{ value: 2, random: true }},
+                line_linked: {{
+                    enable: true,
+                    distance: 120,
+                    color: "#9d00ff",
+                    opacity: 0.3,
+                    width: 1
+                }},
+                move: {{
+                    enable: true,
+                    speed: 1.5,
+                    direction: "none",
+                    random: true,
+                    straight: false,
+                    out_mode: "out",
+                    bounce: false
+                }}
+            }},
+            interactivity: {{
+                detect_on: "canvas",
+                events: {{
+                    onhover: {{ enable: true, mode: "repulse" }},
+                    onclick: {{ enable: true, mode: "push" }}
+                }}
+            }},
+            retina_detect: true
+        }});
         
-        <script src="https://cdn.jsdelivr.net/particles.js/2.0.0/particles.min.js"></script>
-        <script>
-            // Initialize particles
-            particlesJS('particles-js', {
-                particles: {
-                    number: { value: 60, density: { enable: true, value_area: 800 } },
-                    color: { value: ["#ff00ff", "#9d00ff", "#00d4ff"] },
-                    shape: { type: "circle" },
-                    opacity: { value: 0.6, random: true },
-                    size: { value: 2, random: true },
-                    line_linked: {
-                        enable: true,
-                        distance: 120,
-                        color: "#9d00ff",
-                        opacity: 0.3,
-                        width: 1
-                    },
-                    move: {
-                        enable: true,
-                        speed: 1.5,
-                        direction: "none",
-                        random: true,
-                        straight: false,
-                        out_mode: "out",
-                        bounce: false
-                    }
-                },
-                interactivity: {
-                    detect_on: "canvas",
-                    events: {
-                        onhover: { enable: true, mode: "repulse" },
-                        onclick: { enable: true, mode: "push" }
-                    }
-                },
-                retina_detect: true
-            });
+        function revealKey() {{
+            const display = document.getElementById('apiKeyDisplay');
+            display.classList.add('revealed');
+            showNotification('🔓 Key revealed');
+        }}
+        
+        function copyKey() {{
+            const key = "{session['user_key']}";
+            navigator.clipboard.writeText(key).then(() => {{
+                showNotification('✅ API key copied to clipboard');
+                
+                // Animate copy button
+                const btn = event.target.closest('.action-btn');
+                if (btn) {{
+                    btn.style.background = 'linear-gradient(45deg, #00ff9d, #00d4ff)';
+                    setTimeout(() => {{
+                        btn.style.background = 'linear-gradient(45deg, #ff00ff, #9d00ff)';
+                    }}, 1000);
+                }}
+            }});
+        }}
+        
+        function refreshProfile() {{
+            showNotification('🔄 Refreshing profile...');
+            setTimeout(() => location.reload(), 1000);
+        }}
+        
+        function changeKey() {{
+            if (!confirm('Generate a new API key? Your current key will be invalidated.')) return;
             
-            function revealKey() {{
-                const display = document.getElementById('apiKeyDisplay');
-                display.classList.add('revealed');
-                showNotification('🔓 Key revealed');
-            }}
+            showNotification('🔑 Generating new key...');
             
-            function copyKey() {{
-                const key = "{session['user_key']}";
-                navigator.clipboard.writeText(key).then(() => {{
-                    showNotification('✅ API key copied to clipboard');
-                    
-                    // Animate copy button
-                    const btn = event.target.closest('.action-btn');
-                    if (btn) {{
-                        btn.style.background = 'linear-gradient(45deg, #00ff9d, #00d4ff)';
-                        setTimeout(() => {{
-                            btn.style.background = 'linear-gradient(45deg, #ff00ff, #9d00ff)';
-                        }}, 1000);
-                    }}
+            fetch('/api/change-key', {{
+                method: 'POST',
+                headers: {{'Content-Type': 'application/json'}},
+                body: JSON.stringify({{ api_key: "{session['user_key']}" }})
+            }})
+            .then(r => r.json())
+            .then(data => {{
+                if (data.success) {{
+                    showNotification('✅ New key generated! Please login again.');
+                    setTimeout(() => window.location.href = '/logout', 1500);
+                }} else {{
+                    showNotification('❌ ' + data.error);
+                }}
+            }})
+            .catch(() => showNotification('❌ Error changing key'));
+        }}
+        
+        function createTicket() {{
+            showNotification('🎫 Use /ticket command in Discord to create tickets');
+        }}
+        
+        function showNotification(message) {{
+            const notification = document.getElementById('notification');
+            notification.textContent = message;
+            notification.style.display = 'block';
+            
+            // Add particles effect for success
+            if (message.includes('✅') || message.includes('🔓')) {{
+                particlesJS('particles-js', {{
+                    particles: {{
+                        number: {{ value: 80, density: {{ enable: true, value_area: 800 }} }},
+                        color: {{ value: "#00ff9d" }},
+                        shape: {{ type: "circle" }},
+                        opacity: {{ value: 0.8, random: true }},
+                        size: {{ value: 3, random: true }},
+                        line_linked: {{ enable: false }},
+                        move: {{
+                            enable: true,
+                            speed: 4,
+                            direction: "top",
+                            random: true,
+                            straight: false,
+                            out_mode: "out",
+                            bounce: false
+                        }}
+                    }},
+                    retina_detect: true
                 }});
-            }}
-            
-            function refreshProfile() {{
-                showNotification('🔄 Refreshing profile...');
-                setTimeout(() => location.reload(), 1000);
-            }}
-            
-            function changeKey() {{
-                if (!confirm('Generate a new API key? Your current key will be invalidated.')) return;
                 
-                showNotification('🔑 Generating new key...');
-                
-                fetch('/api/change-key', {{
-                    method: 'POST',
-                    headers: {{'Content-Type': 'application/json'}},
-                    body: JSON.stringify({{ api_key: "{session['user_key']}" }})
-                }})
-                .then(r => r.json())
-                .then(data => {{
-                    if (data.success) {{
-                        showNotification('✅ New key generated! Please login again.');
-                        setTimeout(() => window.location.href = '/logout', 1500);
-                    }} else {{
-                        showNotification('❌ ' + data.error);
-                    }}
-                }})
-                .catch(() => showNotification('❌ Error changing key'));
-            }}
-            
-            function createTicket() {{
-                showNotification('🎫 Use /ticket command in Discord to create tickets');
-            }}
-            
-            function showNotification(message) {{
-                const notification = document.getElementById('notification');
-                notification.textContent = message;
-                notification.style.display = 'block';
-                
-                // Add particles effect for success
-                if (message.includes('✅') || message.includes('🔓')) {{
-                    particlesJS('particles-js', {
-                        particles: {
-                            number: { value: 80, density: { enable: true, value_area: 800 } },
-                            color: { value: "#00ff9d" },
-                            shape: { type: "circle" },
-                            opacity: { value: 0.8, random: true },
-                            size: { value: 3, random: true },
-                            line_linked: { enable: false },
-                            move: {
+                // Reset after 2 seconds
+                setTimeout(() => {{
+                    particlesJS('particles-js', {{
+                        particles: {{
+                            number: {{ value: 60, density: {{ enable: true, value_area: 800 }} }},
+                            color: {{ value: ["#ff00ff", "#9d00ff", "#00d4ff"] }},
+                            shape: {{ type: "circle" }},
+                            opacity: {{ value: 0.6, random: true }},
+                            size: {{ value: 2, random: true }},
+                            line_linked: {{
                                 enable: true,
-                                speed: 4,
-                                direction: "top",
+                                distance: 120,
+                                color: "#9d00ff",
+                                opacity: 0.3,
+                                width: 1
+                            }},
+                            move: {{
+                                enable: true,
+                                speed: 1.5,
+                                direction: "none",
                                 random: true,
                                 straight: false,
                                 out_mode: "out",
                                 bounce: false
-                            }
-                        },
+                            }}
+                        }},
+                        interactivity: {{
+                            detect_on: "canvas",
+                            events: {{
+                                onhover: {{ enable: true, mode: "repulse" }},
+                                onclick: {{ enable: true, mode: "push" }}
+                            }}
+                        }},
                         retina_detect: true
-                    });
-                    
-                    // Reset after 2 seconds
-                    setTimeout(() => {{
-                        particlesJS('particles-js', {
-                            particles: {
-                                number: { value: 60, density: { enable: true, value_area: 800 } },
-                                color: { value: ["#ff00ff", "#9d00ff", "#00d4ff"] },
-                                shape: { type: "circle" },
-                                opacity: { value: 0.6, random: true },
-                                size: { value: 2, random: true },
-                                line_linked: {
-                                    enable: true,
-                                    distance: 120,
-                                    color: "#9d00ff",
-                                    opacity: 0.3,
-                                    width: 1
-                                },
-                                move: {
-                                    enable: true,
-                                    speed: 1.5,
-                                    direction: "none",
-                                    random: true,
-                                    straight: false,
-                                    out_mode: "out",
-                                    bounce: false
-                                }
-                            },
-                            interactivity: {
-                                detect_on: "canvas",
-                                events: {
-                                    onhover: { enable: true, mode: "repulse" },
-                                    onclick: { enable: true, mode: "push" }
-                                }
-                            },
-                            retina_detect: true
-                        });
-                    }}, 2000);
-                }}
-                
-                setTimeout(() => {{
-                    notification.style.display = 'none';
-                }}, 3000);
+                    }});
+                }}, 2000);
             }}
             
-            // Auto-refresh profile every 2 minutes
-            setInterval(refreshProfile, 120000);
-            
-            // Add hover effect to stat cards
-            document.querySelectorAll('.stat-item').forEach(card => {{
-                card.addEventListener('mouseenter', () => {{
-                    const value = card.querySelector('.stat-value');
-                    const color = getComputedStyle(value).color;
-                    card.style.borderColor = color;
-                }});
-                
-                card.addEventListener('mouseleave', () => {{
-                    card.style.borderColor = 'rgba(157, 0, 255, 0.2)';
-                }});
+            setTimeout(() => {{
+                notification.style.display = 'none';
+            }}, 3000);
+        }}
+        
+        // Auto-refresh profile every 2 minutes
+        setInterval(refreshProfile, 120000);
+        
+        // Add hover effect to stat cards
+        document.querySelectorAll('.stat-item').forEach(card => {{
+            card.addEventListener('mouseenter', () => {{
+                const value = card.querySelector('.stat-value');
+                const color = getComputedStyle(value).color;
+                card.style.borderColor = color;
             }});
-        </script>
-    </body>
-    </html>
-    '''
+            
+            card.addEventListener('mouseleave', () => {{
+                card.style.borderColor = 'rgba(157, 0, 255, 0.2)';
+            }});
+        }});
+    </script>
+</body>
+</html>'''
+    
+    return html
 
 # =============================================================================
 # API ENDPOINTS
