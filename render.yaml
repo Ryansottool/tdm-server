@@ -12,16 +12,17 @@ services:
         value: 3.9.0
     
   # Discord Bot (Worker)
-  - type: worker
-    name: sot-tdm-bot
+ services:
+  # Combined Server + Discord Bot
+  - type: web
+    name: sot-tdm-combined
     env: python
     buildCommand: pip install -r requirements.txt
-    startCommand: python discord_bot.py
+    startCommand: python app.py
     envVars:
+      - key: PORT
+        value: 5000
       - key: DISCORD_TOKEN
-        sync: false
-      - key: SERVER_URL
-        fromService:
-          name: sot-tdm-server
-          type: web
-          property: url
+        sync: false  # You'll set this in Render dashboard
+      - key: PYTHON_VERSION
+        value: 3.9.0
