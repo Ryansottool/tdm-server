@@ -1,4 +1,1758 @@
-# app.py - SIMPLE ANIMATED WEB + DISCORD BOT
+# app.py - TOXIC GOBLIN REGISTRY (Key-First Access)
+import os
+import json
+import sqlite3
+import random
+import string
+import threading
+import time
+import hashlib
+import requests
+from flask import Flask, request, jsonify, session, redirect, url_for
+from flask_cors import CORS
+from datetime import datetime, timedelta
+import logging
+import hmac
+import base64
+
+app = Flask(__name__)
+app.secret_key = os.environ.get('SECRET_KEY', 'toxic-goblin-secret-key-change-this')
+CORS(app)
+DATABASE = 'sot_tdm.db'
+port = int(os.environ.get("PORT", 10000))
+
+# Discord credentials
+DISCORD_TOKEN = os.environ.get('DISCORD_TOKEN', '')
+DISCORD_CLIENT_ID = os.environ.get('DISCORD_CLIENT_ID', '')
+DISCORD_PUBLIC_KEY = os.environ.get('DISCORD_PUBLIC_KEY', '')
+
+# Developer keys (for update functionality)
+DEVELOPER_KEYS = os.environ.get('DEVELOPER_KEYS', '').split(',')
+DEV_UPDATE_PASSWORD = os.environ.get('DEV_UPDATE_PASSWORD', 'admin123')
+
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
+
+# Bot status
+bot_active = False
+bot_info = {}
+
+# Toxic COD voice chat responses (RAW)
+TOXIC_PING_RESPONSES = [
+    "Shut the fuck up kid",
+    "Bro thinks pinging does something 💀",
+    "Yapping",
+    "Your mom's calling you for dinner",
+    "1v1 me rust rn",
+    "Bro's malding",
+    "Imagine being this down bad",
+    "L+Ratio+You fell off",
+    "Go touch grass",
+    "Bro's seething",
+    "Cry about it",
+    "Skill issue",
+    "Mad cuz bad",
+    "Get good",
+    "What's your K/D? Oh wait you don't have one",
+    "Bro thinks he's him",
+    "Actual bot",
+    "Go back to Fortnite",
+    "Zero PR",
+    "You're that kid who goes 2-17",
+    "Bro got filtered",
+    "Dogwater player",
+    "Get a life",
+    "Bro is NOT him",
+    "Absolute clown behavior",
+    "Go back to silver",
+    "Actual NPC",
+    "Lil bro is lost",
+    "Bro is COOKED",
+    "Take the L and move on"
+]
+
+# =============================================================================
+# DISCORD SIGNATURE VERIFICATION
+# =============================================================================
+
+def verify_discord_signature(request):
+    """Verify Discord request signature"""
+    signature = request.headers.get('X-Signature-Ed25519')
+    timestamp = request.headers.get('X-Signature-Timestamp')
+    body = request.get_data().decode('utf-8')
+    
+    if not signature or not timestamp:
+        logger.error("Missing Discord signature headers")
+        return False
+    
+    if not DISCORD_PUBLIC_KEY:
+        logger.error("DISCORD_PUBLIC_KEY not set")
+        return False
+    
+    try:
+        import nacl.signing
+        import nacl.exceptions
+        
+        message = f"{timestamp}{body}".encode('utf-8')
+        signature_bytes = bytes.fromhex(signature)
+        verify_key = nacl.signing.VerifyKey(bytes.fromhex(DISCORD_PUBLIC_KEY))
+        verify_key.verify(message, signature_bytes)
+        
+        return True
+        
+    except ImportError:
+        logger.error("PyNaCl not installed")
+        return False
+    except nacl.exceptions.BadSignatureError:
+        logger.error("Invalid Discord signature")
+        return False
+    except Exception as e:
+        logger.error(f"Signature verification error: {e}")
+        return False
+
+# =============================================================================
+# DATABASE SETUP - MULTI-SERVER READY
+# =============================================================================
+
+def init_db():
+    """Initialize database for multi-server support"""
+    with app.app_context():
+        conn = sqlite3.connect(DATABASE)
+        cursor = conn.cursor()
+        
+        # Players - now with server_id
+        cursor.execute('''
+            CREATE TABLE IF NOT EXISTS players (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                discord_id TEXT,
+                discord_name TEXT,
+                in_game_name TEXT,
+                api_key TEXT UNIQUE,
+                server_id TEXT,
+                key_created TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                last_used TIMESTAMP,
+                total_kills INTEGER DEFAULT 0,
+                total_deaths INTEGER DEFAULT 0,
+                wins INTEGER DEFAULT 0,
+                losses INTEGER DEFAULT 0,
+                prestige INTEGER DEFAULT 0,
+                credits INTEGER DEFAULT 1000,
+                title TEXT DEFAULT 'Bot',
+                status TEXT DEFAULT 'active',
+                banned BOOLEAN DEFAULT 0,
+                ban_reason TEXT,
+                banned_by TEXT,
+                banned_at TIMESTAMP,
+                toxic_level INTEGER DEFAULT 1,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                UNIQUE(discord_id, server_id)
+            )
+        ''')
+        
+        # Server-specific settings
+        cursor.execute('''
+            CREATE TABLE IF NOT EXISTS server_settings (
+                server_id TEXT PRIMARY KEY,
+                server_name TEXT,
+                owner_id TEXT,
+                mod_role_ids TEXT DEFAULT '',
+                welcome_message TEXT DEFAULT '',
+                toxic_mode BOOLEAN DEFAULT 1,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
+        ''')
+        
+        # Client updates table
+        cursor.execute('''
+            CREATE TABLE IF NOT EXISTS client_updates (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                version TEXT UNIQUE,
+                download_url TEXT,
+                changelog TEXT,
+                is_critical BOOLEAN DEFAULT 0,
+                uploaded_by TEXT,
+                uploaded_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
+        ''')
+        
+        # Moderators - server-specific
+        cursor.execute('''
+            CREATE TABLE IF NOT EXISTS server_moderators (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                server_id TEXT,
+                discord_id TEXT,
+                role TEXT,  -- 'owner', 'admin', 'mod'
+                added_by TEXT,
+                added_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                UNIQUE(server_id, discord_id)
+            )
+        ''')
+        
+        # Multi-server moderation logs
+        cursor.execute('''
+            CREATE TABLE IF NOT EXISTS moderation_logs (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                player_id INTEGER,
+                server_id TEXT,
+                action TEXT,
+                moderator_id TEXT,
+                moderator_name TEXT,
+                reason TEXT,
+                duration_days INTEGER,
+                expires_at TIMESTAMP,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                FOREIGN KEY (player_id) REFERENCES players (id)
+            )
+        ''')
+        
+        # Matches - can be cross-server
+        cursor.execute('''
+            CREATE TABLE IF NOT EXISTS matches (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                match_code TEXT UNIQUE,
+                server_id TEXT,
+                player1_id INTEGER,
+                player2_id INTEGER,
+                player1_score INTEGER DEFAULT 0,
+                player2_score INTEGER DEFAULT 0,
+                winner_id INTEGER,
+                status TEXT DEFAULT 'completed',
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                FOREIGN KEY (player1_id) REFERENCES players (id),
+                FOREIGN KEY (player2_id) REFERENCES players (id)
+            )
+        ''')
+        
+        # Global bans (cross-server)
+        cursor.execute('''
+            CREATE TABLE IF NOT EXISTS global_bans (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                discord_id TEXT UNIQUE,
+                reason TEXT,
+                banned_by TEXT,
+                banned_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                expires_at TIMESTAMP
+            )
+        ''')
+        
+        # Indexes for performance
+        cursor.execute('CREATE INDEX IF NOT EXISTS idx_players_api_key ON players(api_key)')
+        cursor.execute('CREATE INDEX IF NOT EXISTS idx_players_discord_server ON players(discord_id, server_id)')
+        cursor.execute('CREATE INDEX IF NOT EXISTS idx_players_server ON players(server_id)')
+        cursor.execute('CREATE INDEX IF NOT EXISTS idx_mods_server ON server_moderators(server_id)')
+        cursor.execute('CREATE INDEX IF NOT EXISTS idx_settings_server ON server_settings(server_id)')
+        
+        conn.commit()
+        conn.close()
+        logger.info("✅ Multi-server database initialized")
+
+def get_db_connection():
+    """Get database connection"""
+    conn = sqlite3.connect(DATABASE)
+    conn.row_factory = sqlite3.Row
+    return conn
+
+# =============================================================================
+# KEY VALIDATION & AUTHENTICATION
+# =============================================================================
+
+def validate_api_key(api_key):
+    """Validate API key and return player data"""
+    if not api_key:
+        return None
+    
+    # Check if it's a developer key
+    if api_key in DEVELOPER_KEYS:
+        return {"type": "developer", "key": api_key}
+    
+    # Check if it's a regular player key
+    conn = get_db_connection()
+    player = conn.execute(
+        'SELECT * FROM players WHERE api_key = ?',
+        (api_key,)
+    ).fetchone()
+    
+    if player:
+        # Check if globally banned
+        global_ban = conn.execute(
+            'SELECT * FROM global_bans WHERE discord_id = ? AND (expires_at IS NULL OR expires_at > CURRENT_TIMESTAMP)',
+            (player['discord_id'],)
+        ).fetchone()
+        
+        if global_ban:
+            conn.close()
+            return None
+            
+        # Update last used
+        conn.execute(
+            'UPDATE players SET last_used = CURRENT_TIMESTAMP WHERE id = ?',
+            (player['id'],)
+        )
+        conn.commit()
+    
+    conn.close()
+    if player:
+        return {"type": "player", "data": dict(player)}
+    return None
+
+def is_developer_key(key):
+    """Check if key is a developer key"""
+    return key in DEVELOPER_KEYS
+
+# =============================================================================
+# WEB INTERFACE - KEY-FIRST ACCESS
+# =============================================================================
+
+@app.route('/')
+def home():
+    """Main page - Key entry only"""
+    # Check if user is already authenticated
+    if 'user_key' in session:
+        user_data = validate_api_key(session['user_key'])
+        if user_data:
+            return redirect(url_for('dashboard'))
+    
+    return '''
+    <!DOCTYPE html>
+    <html>
+    <head>
+        <title>🔑 TOXIC GOBLIN - ACCESS</title>
+        <meta charset="UTF-8">
+        <meta name="viewport" content="width=device-width, initial-scale=1.0">
+        <style>
+            @import url('https://fonts.googleapis.com/css2?family=Montserrat:wght@800;900&family=Inter:wght@400;600&display=swap');
+            
+            :root {
+                --toxic-green: #39ff14;
+                --toxic-purple: #9d00ff;
+                --toxic-pink: #ff00ff;
+                --toxic-orange: #ff6b00;
+                --dark: #0a0a0a;
+                --darker: #050505;
+            }
+            
+            * {
+                margin: 0;
+                padding: 0;
+                box-sizing: border-box;
+            }
+            
+            body {
+                font-family: 'Inter', sans-serif;
+                background: var(--dark);
+                color: white;
+                min-height: 100vh;
+                display: flex;
+                justify-content: center;
+                align-items: center;
+                position: relative;
+                overflow: hidden;
+            }
+            
+            body::before {
+                content: '';
+                position: fixed;
+                top: 0;
+                left: 0;
+                width: 100%;
+                height: 100%;
+                background: 
+                    radial-gradient(circle at 20% 80%, var(--toxic-green) 0%, transparent 50%),
+                    radial-gradient(circle at 80% 20%, var(--toxic-purple) 0%, transparent 50%),
+                    radial-gradient(circle at 40% 40%, var(--toxic-pink) 0%, transparent 50%);
+                opacity: 0.1;
+                z-index: -1;
+                animation: pulse 10s infinite alternate;
+            }
+            
+            @keyframes pulse {
+                0% { opacity: 0.05; }
+                100% { opacity: 0.15; }
+            }
+            
+            .container {
+                width: 100%;
+                max-width: 500px;
+                padding: 30px;
+            }
+            
+            .access-card {
+                background: rgba(20, 20, 20, 0.9);
+                border: 3px solid;
+                border-image: linear-gradient(45deg, var(--toxic-green), var(--toxic-purple)) 1;
+                border-radius: 15px;
+                padding: 40px;
+                backdrop-filter: blur(10px);
+                text-align: center;
+                position: relative;
+                overflow: hidden;
+            }
+            
+            .access-card::before {
+                content: '';
+                position: absolute;
+                top: 0;
+                left: 0;
+                right: 0;
+                height: 5px;
+                background: linear-gradient(90deg, var(--toxic-green), var(--toxic-purple), var(--toxic-pink));
+            }
+            
+            h1 {
+                font-family: 'Montserrat', sans-serif;
+                font-size: 2.5rem;
+                background: linear-gradient(45deg, var(--toxic-green), var(--toxic-purple));
+                -webkit-background-clip: text;
+                -webkit-text-fill-color: transparent;
+                margin-bottom: 10px;
+            }
+            
+            .subtitle {
+                color: #888;
+                margin-bottom: 30px;
+                font-size: 1rem;
+            }
+            
+            .key-input {
+                width: 100%;
+                padding: 18px;
+                background: rgba(0, 0, 0, 0.7);
+                border: 2px solid var(--toxic-purple);
+                border-radius: 10px;
+                color: white;
+                font-size: 18px;
+                font-family: monospace;
+                letter-spacing: 1px;
+                text-align: center;
+                margin-bottom: 25px;
+                transition: all 0.3s;
+            }
+            
+            .key-input:focus {
+                outline: none;
+                border-color: var(--toxic-green);
+                box-shadow: 0 0 20px rgba(57, 255, 20, 0.3);
+                transform: scale(1.02);
+            }
+            
+            .submit-btn {
+                width: 100%;
+                padding: 18px;
+                background: linear-gradient(45deg, var(--toxic-green), var(--toxic-purple));
+                color: black;
+                border: none;
+                border-radius: 10px;
+                font-family: 'Montserrat', sans-serif;
+                font-weight: bold;
+                font-size: 18px;
+                cursor: pointer;
+                transition: all 0.3s;
+                text-transform: uppercase;
+                letter-spacing: 2px;
+            }
+            
+            .submit-btn:hover {
+                transform: translateY(-3px);
+                box-shadow: 0 10px 25px rgba(57, 255, 20, 0.3);
+                background: linear-gradient(45deg, var(--toxic-purple), var(--toxic-green));
+            }
+            
+            .submit-btn:active {
+                transform: translateY(-1px);
+            }
+            
+            .error-message {
+                background: rgba(255, 0, 0, 0.1);
+                border: 2px solid #ff0000;
+                color: #ff5555;
+                padding: 15px;
+                border-radius: 8px;
+                margin-top: 20px;
+                display: none;
+                animation: slideIn 0.3s;
+            }
+            
+            @keyframes slideIn {
+                from { opacity: 0; transform: translateY(-10px); }
+                to { opacity: 1; transform: translateY(0); }
+            }
+            
+            .help-text {
+                margin-top: 25px;
+                color: #666;
+                font-size: 0.9rem;
+                line-height: 1.5;
+            }
+            
+            .help-text a {
+                color: var(--toxic-green);
+                text-decoration: none;
+            }
+            
+            .help-text a:hover {
+                text-decoration: underline;
+            }
+            
+            .floating-toxic {
+                position: fixed;
+                font-size: 1.5rem;
+                opacity: 0.1;
+                pointer-events: none;
+                z-index: -1;
+                animation: float 20s infinite linear;
+            }
+            
+            @keyframes float {
+                0% { transform: translateY(100vh) rotate(0deg); }
+                100% { transform: translateY(-100vh) rotate(360deg); }
+            }
+            
+            @media (max-width: 768px) {
+                .container {
+                    padding: 20px;
+                }
+                .access-card {
+                    padding: 30px 20px;
+                }
+                h1 {
+                    font-size: 2rem;
+                }
+            }
+        </style>
+    </head>
+    <body>
+        <!-- Floating toxic symbols -->
+        <div class="floating-toxic" style="left: 10%; animation-delay: 0s;">🔑</div>
+        <div class="floating-toxic" style="left: 20%; animation-delay: -5s;">🔒</div>
+        <div class="floating-toxic" style="left: 30%; animation-delay: -10s;">⚡</div>
+        <div class="floating-toxic" style="left: 40%; animation-delay: -15s;">💀</div>
+        <div class="floating-toxic" style="left: 50%; animation-delay: -20s;">🔥</div>
+        
+        <div class="container">
+            <div class="access-card">
+                <h1>TOXIC GOBLIN</h1>
+                <div class="subtitle">Enter your API key to access the system</div>
+                
+                <input type="text" 
+                       class="key-input" 
+                       id="apiKey" 
+                       placeholder="TOX-XXXX-XXXX-XXXX-XXXX" 
+                       autocomplete="off"
+                       autocorrect="off"
+                       autocapitalize="off"
+                       spellcheck="false">
+                
+                <button class="submit-btn" onclick="validateKey()">
+                    🔐 ACCESS SYSTEM
+                </button>
+                
+                <div class="error-message" id="errorMessage">
+                    Invalid API key. Get your key from Discord using /register
+                </div>
+                
+                <div class="help-text">
+                    <p>• Get your API key from Discord: <code>/register your_name</code></p>
+                    <p>• Developer keys have additional privileges</p>
+                    <p>• Keys are server-specific for player accounts</p>
+                </div>
+            </div>
+        </div>
+        
+        <script>
+            async function validateKey() {
+                const key = document.getElementById('apiKey').value.trim();
+                const errorDiv = document.getElementById('errorMessage');
+                
+                if (!key) {
+                    errorDiv.textContent = "Please enter an API key";
+                    errorDiv.style.display = 'block';
+                    return;
+                }
+                
+                if (!key.startsWith('TOX-')) {
+                    errorDiv.textContent = "Key must start with TOX-";
+                    errorDiv.style.display = 'block';
+                    return;
+                }
+                
+                // Disable button and show loading
+                const btn = document.querySelector('.submit-btn');
+                btn.innerHTML = '🔐 VERIFYING...';
+                btn.disabled = true;
+                
+                try {
+                    // Send key to server for validation
+                    const response = await fetch('/api/validate-key', {
+                        method: 'POST',
+                        headers: {
+                            'Content-Type': 'application/json',
+                        },
+                        body: JSON.stringify({ api_key: key })
+                    });
+                    
+                    const data = await response.json();
+                    
+                    if (data.valid) {
+                        // Key is valid, redirect to dashboard
+                        window.location.href = '/dashboard';
+                    } else {
+                        // Key is invalid
+                        errorDiv.textContent = data.error || 'Invalid API key';
+                        errorDiv.style.display = 'block';
+                        btn.innerHTML = '🔐 ACCESS SYSTEM';
+                        btn.disabled = false;
+                    }
+                } catch (error) {
+                    errorDiv.textContent = 'Connection error. Try again.';
+                    errorDiv.style.display = 'block';
+                    btn.innerHTML = '🔐 ACCESS SYSTEM';
+                    btn.disabled = false;
+                }
+            }
+            
+            // Allow Enter key to submit
+            document.getElementById('apiKey').addEventListener('keypress', function(e) {
+                if (e.key === 'Enter') {
+                    validateKey();
+                }
+            });
+            
+            // Focus on input when page loads
+            document.addEventListener('DOMContentLoaded', function() {
+                document.getElementById('apiKey').focus();
+            });
+        </script>
+    </body>
+    </html>
+    '''
+
+@app.route('/api/validate-key', methods=['POST'])
+def validate_key():
+    """Validate API key and set session"""
+    data = request.get_json()
+    api_key = data.get('api_key', '').strip()
+    
+    if not api_key:
+        return jsonify({"valid": False, "error": "No key provided"})
+    
+    # Validate the key
+    user_data = validate_api_key(api_key)
+    
+    if user_data:
+        # Set session
+        session['user_key'] = api_key
+        session['user_type'] = user_data['type']
+        
+        if user_data['type'] == 'player':
+            session['player_data'] = user_data['data']
+        
+        return jsonify({"valid": True})
+    else:
+        return jsonify({"valid": False, "error": "Invalid or expired API key"})
+
+@app.route('/logout')
+def logout():
+    """Clear session and logout"""
+    session.clear()
+    return redirect(url_for('home'))
+
+@app.route('/dashboard')
+def dashboard():
+    """Main dashboard after key validation"""
+    # Check if user is authenticated
+    if 'user_key' not in session:
+        return redirect(url_for('home'))
+    
+    # Validate key again
+    user_data = validate_api_key(session['user_key'])
+    if not user_data:
+        session.clear()
+        return redirect(url_for('home'))
+    
+    user_type = session.get('user_type')
+    player_data = session.get('player_data', {})
+    
+    # Render appropriate dashboard
+    if user_type == 'developer':
+        return render_developer_dashboard()
+    else:
+        return render_player_dashboard(player_data)
+
+def render_player_dashboard(player_data):
+    """Render player dashboard"""
+    kd = player_data.get('total_kills', 0) / max(player_data.get('total_deaths', 1), 1)
+    win_rate = 0
+    if player_data.get('wins', 0) + player_data.get('losses', 0) > 0:
+        win_rate = (player_data.get('wins', 0) / (player_data.get('wins', 0) + player_data.get('losses', 0)) * 100)
+    
+    # Toxic commentary based on stats
+    commentary = ""
+    if kd < 0.5:
+        commentary = "📉 K/D ratio looking rough"
+    elif kd < 1:
+        commentary = "📊 Mediocre at best"
+    elif player_data.get('losses', 0) > player_data.get('wins', 0):
+        commentary = "💀 Professional L-taker detected"
+    else:
+        commentary = "⭐ Not completely terrible"
+    
+    return f'''
+    <!DOCTYPE html>
+    <html>
+    <head>
+        <title>📊 PLAYER DASHBOARD</title>
+        <meta charset="UTF-8">
+        <meta name="viewport" content="width=device-width, initial-scale=1.0">
+        <style>
+            @import url('https://fonts.googleapis.com/css2?family=Montserrat:wght@800;900&family=Inter:wght@400;600&display=swap');
+            
+            :root {{
+                --toxic-green: #39ff14;
+                --toxic-purple: #9d00ff;
+                --toxic-pink: #ff00ff;
+                --dark: #0a0a0a;
+                --darker: #050505;
+            }}
+            
+            * {{
+                margin: 0;
+                padding: 0;
+                box-sizing: border-box;
+            }}
+            
+            body {{
+                font-family: 'Inter', sans-serif;
+                background: var(--dark);
+                color: white;
+                min-height: 100vh;
+                position: relative;
+                overflow-x: hidden;
+            }}
+            
+            body::before {{
+                content: '';
+                position: fixed;
+                top: 0;
+                left: 0;
+                width: 100%;
+                height: 100%;
+                background: 
+                    radial-gradient(circle at 20% 80%, var(--toxic-green) 0%, transparent 50%),
+                    radial-gradient(circle at 80% 20%, var(--toxic-purple) 0%, transparent 50%);
+                opacity: 0.1;
+                z-index: -1;
+            }}
+            
+            .header {{
+                background: rgba(20, 20, 20, 0.9);
+                border-bottom: 3px solid var(--toxic-green);
+                padding: 20px 30px;
+                display: flex;
+                justify-content: space-between;
+                align-items: center;
+                backdrop-filter: blur(10px);
+            }}
+            
+            .logo {{
+                font-family: 'Montserrat', sans-serif;
+                font-size: 1.8rem;
+                background: linear-gradient(45deg, var(--toxic-green), var(--toxic-purple));
+                -webkit-background-clip: text;
+                -webkit-text-fill-color: transparent;
+            }}
+            
+            .user-info {{
+                display: flex;
+                align-items: center;
+                gap: 20px;
+            }}
+            
+            .logout-btn {{
+                padding: 10px 20px;
+                background: rgba(255, 0, 0, 0.2);
+                border: 2px solid #ff0000;
+                color: #ff5555;
+                border-radius: 6px;
+                text-decoration: none;
+                font-weight: bold;
+                transition: all 0.3s;
+            }}
+            
+            .logout-btn:hover {{
+                background: rgba(255, 0, 0, 0.3);
+                transform: translateY(-2px);
+            }}
+            
+            .container {{
+                max-width: 1200px;
+                margin: 0 auto;
+                padding: 30px;
+            }}
+            
+            .dashboard-grid {{
+                display: grid;
+                grid-template-columns: 300px 1fr;
+                gap: 30px;
+            }}
+            
+            .sidebar {{
+                background: rgba(20, 20, 20, 0.8);
+                border: 2px solid var(--toxic-purple);
+                border-radius: 10px;
+                padding: 25px;
+            }}
+            
+            .sidebar h2 {{
+                color: var(--toxic-green);
+                margin-bottom: 20px;
+                font-family: 'Montserrat', sans-serif;
+            }}
+            
+            .player-card {{
+                background: rgba(0, 0, 0, 0.5);
+                border-radius: 8px;
+                padding: 20px;
+                margin-bottom: 20px;
+                border: 1px solid rgba(57, 255, 20, 0.2);
+            }}
+            
+            .player-name {{
+                font-size: 1.4rem;
+                font-weight: bold;
+                margin-bottom: 10px;
+                color: var(--toxic-green);
+            }}
+            
+            .key-display {{
+                background: rgba(0, 0, 0, 0.7);
+                border: 2px solid var(--toxic-purple);
+                border-radius: 8px;
+                padding: 15px;
+                margin-top: 15px;
+                font-family: monospace;
+                font-size: 0.9rem;
+                color: var(--toxic-green);
+                word-break: break-all;
+                cursor: pointer;
+                transition: all 0.3s;
+            }}
+            
+            .key-display:hover {{
+                background: rgba(0, 0, 0, 0.9);
+                box-shadow: 0 0 15px var(--toxic-purple);
+            }}
+            
+            .main-content {{
+                display: grid;
+                grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+                gap: 20px;
+            }}
+            
+            .stat-card {{
+                background: rgba(20, 20, 20, 0.8);
+                border: 2px solid;
+                border-image: linear-gradient(45deg, var(--toxic-green), transparent) 1;
+                border-radius: 10px;
+                padding: 25px;
+                text-align: center;
+            }}
+            
+            .stat-value {{
+                font-size: 2.5rem;
+                font-weight: bold;
+                margin: 10px 0;
+                color: var(--toxic-green);
+            }}
+            
+            .stat-label {{
+                color: #888;
+                font-size: 0.9rem;
+                text-transform: uppercase;
+                letter-spacing: 1px;
+            }}
+            
+            .commentary {{
+                background: rgba(57, 255, 20, 0.1);
+                border: 2px solid var(--toxic-green);
+                border-radius: 8px;
+                padding: 20px;
+                margin-top: 20px;
+                font-style: italic;
+                color: var(--toxic-green);
+            }}
+            
+            .action-section {{
+                background: rgba(20, 20, 20, 0.8);
+                border: 2px solid var(--toxic-purple);
+                border-radius: 10px;
+                padding: 25px;
+                margin-top: 30px;
+            }}
+            
+            .action-btn {{
+                display: inline-block;
+                padding: 15px 30px;
+                background: linear-gradient(45deg, var(--toxic-green), var(--toxic-purple));
+                color: black;
+                border: none;
+                border-radius: 8px;
+                font-family: 'Montserrat', sans-serif;
+                font-weight: bold;
+                cursor: pointer;
+                transition: all 0.3s;
+                text-decoration: none;
+                margin: 10px;
+            }}
+            
+            .action-btn:hover {{
+                transform: translateY(-3px);
+                box-shadow: 0 10px 20px rgba(57, 255, 20, 0.3);
+            }}
+            
+            .floating-toxic {{
+                position: fixed;
+                font-size: 1.5rem;
+                opacity: 0.05;
+                pointer-events: none;
+                z-index: -1;
+                animation: float 20s infinite linear;
+            }}
+            
+            @keyframes float {{
+                0% {{ transform: translateY(100vh) rotate(0deg); }}
+                100% {{ transform: translateY(-100vh) rotate(360deg); }}
+            }}
+            
+            @media (max-width: 768px) {{
+                .dashboard-grid {{
+                    grid-template-columns: 1fr;
+                }}
+                .header {{
+                    flex-direction: column;
+                    gap: 15px;
+                    text-align: center;
+                }}
+                .main-content {{
+                    grid-template-columns: 1fr;
+                }}
+            }}
+        </style>
+    </head>
+    <body>
+        <!-- Floating elements -->
+        <div class="floating-toxic" style="left: 5%; animation-delay: 0s;">📊</div>
+        <div class="floating-toxic" style="left: 15%; animation-delay: -5s;">🎮</div>
+        <div class="floating-toxic" style="left: 25%; animation-delay: -10s;">⚡</div>
+        
+        <div class="header">
+            <div class="logo">TOXIC GOBLIN DASHBOARD</div>
+            <div class="user-info">
+                <div>Player: <strong>{player_data.get('in_game_name', 'Unknown')}</strong></div>
+                <a href="/logout" class="logout-btn">🚪 LOGOUT</a>
+            </div>
+        </div>
+        
+        <div class="container">
+            <div class="dashboard-grid">
+                <div class="sidebar">
+                    <h2>🎮 PLAYER INFO</h2>
+                    <div class="player-card">
+                        <div class="player-name">{player_data.get('in_game_name', 'Unknown')}</div>
+                        <div>Server: {player_data.get('server_id', 'Global')}</div>
+                        <div>Toxic Level: {player_data.get('toxic_level', 1)}/10</div>
+                        <div>Status: <span style="color: #39ff14;">ACTIVE</span></div>
+                        
+                        <div class="key-display" onclick="copyToClipboard('{session['user_key']}')">
+                            {session['user_key']}
+                            <div style="font-size: 0.7rem; color: #888; margin-top: 5px;">Click to copy</div>
+                        </div>
+                    </div>
+                    
+                    <h2 style="margin-top: 30px;">📋 QUICK ACTIONS</h2>
+                    <button class="action-btn" onclick="refreshStats()">🔄 Refresh Stats</button>
+                    <button class="action-btn" onclick="getRandomRoast()">🔥 Get Roasted</button>
+                </div>
+                
+                <div class="main-content">
+                    <div class="stat-card">
+                        <div class="stat-label">K/D RATIO</div>
+                        <div class="stat-value" style="color: { '#ff0000' if kd < 0.5 else '#ff6b00' if kd < 1 else '#39ff14' };">{kd:.2f}</div>
+                        <div>{player_data.get('total_kills', 0)} kills / {player_data.get('total_deaths', 0)} deaths</div>
+                    </div>
+                    
+                    <div class="stat-card">
+                        <div class="stat-label">WIN RATE</div>
+                        <div class="stat-value" style="color: { '#ff0000' if win_rate < 40 else '#ff6b00' if win_rate < 60 else '#39ff14' };">{win_rate:.1f}%</div>
+                        <div>{player_data.get('wins', 0)} wins / {player_data.get('losses', 0)} losses</div>
+                    </div>
+                    
+                    <div class="stat-card">
+                        <div class="stat-label">PRESTIGE</div>
+                        <div class="stat-value">⭐ {player_data.get('prestige', 0)}</div>
+                        <div>Title: {player_data.get('title', 'Bot')}</div>
+                    </div>
+                    
+                    <div class="stat-card">
+                        <div class="stat-label">CREDITS</div>
+                        <div class="stat-value">💰 {player_data.get('credits', 0)}</div>
+                        <div>Available balance</div>
+                    </div>
+                    
+                    <div class="commentary">
+                        <h3>💬 TOXIC COMMENTARY:</h3>
+                        <p>{commentary}</p>
+                        <div id="roastResult" style="margin-top: 10px; font-size: 0.9rem;"></div>
+                    </div>
+                    
+                    <div class="action-section">
+                        <h2 style="color: var(--toxic-purple); margin-bottom: 20px;">⚡ API ENDPOINTS</h2>
+                        <div style="background: rgba(0, 0, 0, 0.5); padding: 15px; border-radius: 8px; margin-bottom: 15px;">
+                            <code>GET /api/profile?key=YOUR_KEY</code>
+                            <div style="color: #888; font-size: 0.9rem;">Get your stats</div>
+                        </div>
+                        <div style="background: rgba(0, 0, 0, 0.5); padding: 15px; border-radius: 8px; margin-bottom: 15px;">
+                            <code>GET /api/roast?key=YOUR_KEY</code>
+                            <div style="color: #888; font-size: 0.9rem;">Get roasted</div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+        
+        <script>
+            function copyToClipboard(text) {{
+                navigator.clipboard.writeText(text);
+                alert('✅ Key copied to clipboard');
+            }}
+            
+            async function refreshStats() {{
+                try {{
+                    const response = await fetch('/api/refresh-stats?key={session['user_key']}');
+                    const data = await response.json();
+                    alert('✅ Stats refreshed');
+                    location.reload();
+                }} catch (error) {{
+                    alert('❌ Error refreshing stats');
+                }}
+            }}
+            
+            async function getRandomRoast() {{
+                try {{
+                    const response = await fetch('/api/roast?key={session['user_key']}');
+                    const data = await response.json();
+                    document.getElementById('roastResult').innerHTML = `<strong>🔥 Roast:</strong> ${{data.roast}}`;
+                }} catch (error) {{
+                    document.getElementById('roastResult').innerHTML = '❌ Error getting roast';
+                }}
+            }}
+            
+            // Auto-refresh every 30 seconds
+            setInterval(refreshStats, 30000);
+        </script>
+    </body>
+    </html>
+    '''
+
+def render_developer_dashboard():
+    """Render developer dashboard with update functionality"""
+    conn = get_db_connection()
+    updates = conn.execute('SELECT * FROM client_updates ORDER BY uploaded_at DESC LIMIT 5').fetchall()
+    conn.close()
+    
+    updates_html = ""
+    for update in updates:
+        updates_html += f'''
+        <div style="background: rgba(30, 30, 30, 0.8); border-left: 4px solid #39ff14; padding: 15px; margin-bottom: 10px; border-radius: 4px;">
+            <strong>v{update['version']}</strong> - {update['uploaded_at']}
+            <div style="color: #888; font-size: 0.9rem; margin-top: 5px;">{update['changelog'][:100]}...</div>
+            <div style="margin-top: 5px;">
+                <a href="{update['download_url']}" target="_blank" style="color: #39ff14;">Download</a>
+                { '🚨 CRITICAL' if update['is_critical'] else '' }
+            </div>
+        </div>
+        '''
+    
+    return f'''
+    <!DOCTYPE html>
+    <html>
+    <head>
+        <title>⚙️ DEVELOPER DASHBOARD</title>
+        <meta charset="UTF-8">
+        <meta name="viewport" content="width=device-width, initial-scale=1.0">
+        <style>
+            @import url('https://fonts.googleapis.com/css2?family=Montserrat:wght@800;900&family=Inter:wght@400;600&display=swap');
+            
+            :root {{
+                --toxic-green: #39ff14;
+                --toxic-purple: #9d00ff;
+                --toxic-pink: #ff00ff;
+                --dark: #0a0a0a;
+            }}
+            
+            * {{
+                margin: 0;
+                padding: 0;
+                box-sizing: border-box;
+            }}
+            
+            body {{
+                font-family: 'Inter', sans-serif;
+                background: var(--dark);
+                color: white;
+                min-height: 100vh;
+            }}
+            
+            .header {{
+                background: rgba(20, 20, 20, 0.9);
+                border-bottom: 3px solid var(--toxic-purple);
+                padding: 20px 30px;
+                display: flex;
+                justify-content: space-between;
+                align-items: center;
+                backdrop-filter: blur(10px);
+            }}
+            
+            .logo {{
+                font-family: 'Montserrat', sans-serif;
+                font-size: 1.8rem;
+                background: linear-gradient(45deg, var(--toxic-purple), var(--toxic-green));
+                -webkit-background-clip: text;
+                -webkit-text-fill-color: transparent;
+            }}
+            
+            .user-info {{
+                display: flex;
+                align-items: center;
+                gap: 20px;
+            }}
+            
+            .logout-btn {{
+                padding: 10px 20px;
+                background: rgba(255, 0, 0, 0.2);
+                border: 2px solid #ff0000;
+                color: #ff5555;
+                border-radius: 6px;
+                text-decoration: none;
+                font-weight: bold;
+                transition: all 0.3s;
+            }}
+            
+            .logout-btn:hover {{
+                background: rgba(255, 0, 0, 0.3);
+                transform: translateY(-2px);
+            }}
+            
+            .container {{
+                max-width: 1200px;
+                margin: 0 auto;
+                padding: 30px;
+            }}
+            
+            .dev-card {{
+                background: rgba(20, 20, 20, 0.8);
+                border: 2px solid var(--toxic-purple);
+                border-radius: 10px;
+                padding: 30px;
+                margin-bottom: 30px;
+            }}
+            
+            h2 {{
+                color: var(--toxic-green);
+                margin-bottom: 20px;
+                font-family: 'Montserrat', sans-serif;
+            }}
+            
+            h3 {{
+                color: var(--toxic-purple);
+                margin: 20px 0 10px 0;
+            }}
+            
+            .update-form {{
+                background: rgba(0, 0, 0, 0.5);
+                padding: 25px;
+                border-radius: 8px;
+                margin-top: 20px;
+                border: 2px solid rgba(57, 255, 20, 0.2);
+            }}
+            
+            .form-input {{
+                width: 100%;
+                padding: 12px;
+                background: rgba(0, 0, 0, 0.7);
+                border: 2px solid var(--toxic-purple);
+                border-radius: 6px;
+                color: white;
+                margin-bottom: 15px;
+                font-family: 'Inter', sans-serif;
+            }}
+            
+            .form-input:focus {{
+                outline: none;
+                border-color: var(--toxic-green);
+            }}
+            
+            .submit-btn {{
+                padding: 15px 30px;
+                background: linear-gradient(45deg, var(--toxic-green), var(--toxic-purple));
+                color: black;
+                border: none;
+                border-radius: 8px;
+                font-family: 'Montserrat', sans-serif;
+                font-weight: bold;
+                cursor: pointer;
+                transition: all 0.3s;
+                margin-top: 10px;
+            }}
+            
+            .submit-btn:hover {{
+                transform: translateY(-3px);
+                box-shadow: 0 10px 20px rgba(57, 255, 20, 0.3);
+            }}
+            
+            .message {{
+                padding: 15px;
+                border-radius: 8px;
+                margin: 15px 0;
+                display: none;
+            }}
+            
+            .success {{
+                background: rgba(57, 255, 20, 0.1);
+                border: 2px solid var(--toxic-green);
+                color: var(--toxic-green);
+            }}
+            
+            .error {{
+                background: rgba(255, 0, 0, 0.1);
+                border: 2px solid #ff0000;
+                color: #ff5555;
+            }}
+            
+            .warning {{
+                background: rgba(255, 107, 0, 0.1);
+                border: 2px solid #ff6b00;
+                color: #ff6b00;
+            }}
+            
+            .updates-list {{
+                max-height: 400px;
+                overflow-y: auto;
+                margin-top: 20px;
+            }}
+            
+            .stats-grid {{
+                display: grid;
+                grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+                gap: 20px;
+                margin: 20px 0;
+            }}
+            
+            .stat-box {{
+                background: rgba(0, 0, 0, 0.5);
+                padding: 20px;
+                border-radius: 8px;
+                text-align: center;
+                border: 1px solid var(--toxic-purple);
+            }}
+            
+            .stat-value {{
+                font-size: 2rem;
+                font-weight: bold;
+                margin: 10px 0;
+                color: var(--toxic-green);
+            }}
+            
+            .stat-label {{
+                color: #888;
+                font-size: 0.9rem;
+            }}
+        </style>
+    </head>
+    <body>
+        <div class="header">
+            <div class="logo">⚙️ DEVELOPER DASHBOARD</div>
+            <div class="user-info">
+                <div>Developer Access</div>
+                <a href="/logout" class="logout-btn">🚪 LOGOUT</a>
+            </div>
+        </div>
+        
+        <div class="container">
+            <div class="dev-card">
+                <h2>📡 ONLINE UPDATE CLIENT</h2>
+                <p style="color: #888; margin-bottom: 20px;">
+                    Upload new client versions for automatic distribution to players.
+                </p>
+                
+                <div class="stats-grid">
+                    <div class="stat-box">
+                        <div class="stat-value">{len(updates)}</div>
+                        <div class="stat-label">Versions</div>
+                    </div>
+                    <div class="stat-box">
+                        <div class="stat-value" id="totalPlayers">0</div>
+                        <div class="stat-label">Players</div>
+                    </div>
+                    <div class="stat-box">
+                        <div class="stat-value" id="totalServers">0</div>
+                        <div class="stat-label">Servers</div>
+                    </div>
+                </div>
+                
+                <h3>📤 UPLOAD NEW VERSION</h3>
+                <div class="update-form">
+                    <input type="text" class="form-input" id="version" placeholder="Version (e.g., 1.2.3)">
+                    <input type="text" class="form-input" id="downloadUrl" placeholder="Download URL">
+                    <textarea class="form-input" id="changelog" placeholder="Changelog" rows="4"></textarea>
+                    
+                    <div style="margin-bottom: 15px;">
+                        <input type="checkbox" id="isCritical">
+                        <label for="isCritical" style="color: #ff6b00;">🚨 Mark as critical update</label>
+                    </div>
+                    
+                    <input type="password" class="form-input" id="updatePassword" placeholder="Update Password">
+                    
+                    <button class="submit-btn" onclick="uploadUpdate()">📤 UPLOAD UPDATE</button>
+                    
+                    <div class="message" id="uploadMessage"></div>
+                </div>
+                
+                <h3>📋 RECENT UPDATES</h3>
+                <div class="updates-list">
+                    {updates_html if updates_html else '<p style="color: #888; text-align: center; padding: 20px;">No updates yet</p>'}
+                </div>
+            </div>
+            
+            <div class="dev-card">
+                <h2>⚙️ SYSTEM CONTROLS</h2>
+                <div style="display: flex; gap: 15px; flex-wrap: wrap;">
+                    <button class="submit-btn" onclick="refreshStats()">🔄 Refresh Stats</button>
+                    <button class="submit-btn" onclick="clearCache()">🧹 Clear Cache</button>
+                    <button class="submit-btn" onclick="restartBot()">🔄 Restart Bot</button>
+                </div>
+            </div>
+        </div>
+        
+        <script>
+            async function uploadUpdate() {{
+                const version = document.getElementById('version').value;
+                const downloadUrl = document.getElementById('downloadUrl').value;
+                const changelog = document.getElementById('changelog').value;
+                const isCritical = document.getElementById('isCritical').checked;
+                const password = document.getElementById('updatePassword').value;
+                
+                if (!version || !downloadUrl || !changelog || !password) {{
+                    showMessage('uploadMessage', 'Please fill all fields', 'error');
+                    return;
+                }}
+                
+                try {{
+                    const response = await fetch('/api/upload-update', {{
+                        method: 'POST',
+                        headers: {{
+                            'Content-Type': 'application/json',
+                        }},
+                        body: JSON.stringify({{
+                            version,
+                            download_url: downloadUrl,
+                            changelog,
+                            is_critical: isCritical,
+                            password
+                        }})
+                    }});
+                    
+                    const data = await response.json();
+                    
+                    if (data.success) {{
+                        showMessage('uploadMessage', '✅ Update uploaded successfully', 'success');
+                        setTimeout(() => location.reload(), 1500);
+                    }} else {{
+                        showMessage('uploadMessage', '❌ ' + data.error, 'error');
+                    }}
+                }} catch (error) {{
+                    showMessage('uploadMessage', '❌ Connection error', 'error');
+                }}
+            }}
+            
+            async function refreshStats() {{
+                try {{
+                    const response = await fetch('/api/stats');
+                    const data = await response.json();
+                    document.getElementById('totalPlayers').textContent = data.total_players || '0';
+                    document.getElementById('totalServers').textContent = data.total_servers || '0';
+                    showMessage('uploadMessage', '✅ Stats refreshed', 'success');
+                }} catch (error) {{
+                    showMessage('uploadMessage', '❌ Error refreshing stats', 'error');
+                }}
+            }}
+            
+            async function clearCache() {{
+                if (confirm('Clear all cache? This will force clients to reload data.')) {{
+                    showMessage('uploadMessage', '🔄 Clearing cache...', 'warning');
+                    // Add cache clearing logic here
+                }}
+            }}
+            
+            async function restartBot() {{
+                if (confirm('Restart Discord bot connection?')) {{
+                    showMessage('uploadMessage', '🔄 Restarting bot...', 'warning');
+                    // Add bot restart logic here
+                }}
+            }}
+            
+            function showMessage(elementId, message, type) {{
+                const element = document.getElementById(elementId);
+                element.textContent = message;
+                element.className = 'message ' + type;
+                element.style.display = 'block';
+                
+                setTimeout(() => {{
+                    element.style.display = 'none';
+                }}, 5000);
+            }}
+            
+            // Load stats on page load
+            document.addEventListener('DOMContentLoaded', function() {{
+                refreshStats();
+            }});
+        </script>
+    </body>
+    </html>
+    '''
+
+# =============================================================================
+# API ENDPOINTS
+# =============================================================================
+
+@app.route('/api/refresh-stats')
+def api_refresh_stats():
+    """Refresh player stats"""
+    api_key = request.args.get('key')
+    if not api_key:
+        return jsonify({"error": "No key provided"}), 401
+    
+    player = validate_api_key(api_key)
+    if not player or player.get('type') != 'player':
+        return jsonify({"error": "Invalid key"}), 401
+    
+    # In a real implementation, you'd update stats from external sources
+    return jsonify({"success": True, "message": "Stats refreshed"})
+
+@app.route('/api/upload-update', methods=['POST'])
+def api_upload_update():
+    """Upload new client update (developer only)"""
+    data = request.get_json()
+    api_key = session.get('user_key')
+    
+    if not api_key or not is_developer_key(api_key):
+        return jsonify({"success": False, "error": "Developer access required"}), 403
+    
+    # Verify password
+    password = data.get('password')
+    if password != DEV_UPDATE_PASSWORD:
+        return jsonify({"success": False, "error": "Invalid update password"}), 401
+    
+    version = data.get('version')
+    download_url = data.get('download_url')
+    changelog = data.get('changelog')
+    is_critical = data.get('is_critical', False)
+    
+    if not version or not download_url or not changelog:
+        return jsonify({"success": False, "error": "Missing required fields"}), 400
+    
+    conn = get_db_connection()
+    try:
+        conn.execute('''
+            INSERT INTO client_updates (version, download_url, changelog, is_critical, uploaded_by)
+            VALUES (?, ?, ?, ?, ?)
+        ''', (version, download_url, changelog, is_critical, 'developer'))
+        conn.commit()
+        conn.close()
+        return jsonify({"success": True})
+    except sqlite3.IntegrityError:
+        conn.close()
+        return jsonify({"success": False, "error": "Version already exists"}), 400
+    except Exception as e:
+        conn.close()
+        return jsonify({"success": False, "error": str(e)}), 500
+
+@app.route('/api/latest-update')
+def api_latest_update():
+    """Get latest client update"""
+    conn = get_db_connection()
+    update = conn.execute(
+        'SELECT * FROM client_updates ORDER BY uploaded_at DESC LIMIT 1'
+    ).fetchone()
+    conn.close()
+    
+    if update:
+        return jsonify(dict(update))
+    else:
+        return jsonify({"error": "No updates available"}), 404
+
+@app.route('/api/stats')
+def api_stats():
+    """Get global toxic stats"""
+    conn = get_db_connection()
+    
+    total_players = conn.execute('SELECT COUNT(*) as count FROM players').fetchone()['count']
+    total_servers = conn.execute('SELECT COUNT(DISTINCT server_id) as count FROM server_settings').fetchone()['count']
+    total_kills = conn.execute('SELECT SUM(total_kills) as sum FROM players').fetchone()['sum'] or 0
+    total_bans = conn.execute('SELECT COUNT(*) as count FROM players WHERE banned = 1').fetchone()['count']
+    
+    conn.close()
+    
+    return jsonify({
+        "total_players": total_players,
+        "total_servers": total_servers,
+        "total_kills": total_kills,
+        "total_bans": total_bans,
+        "message": "Get rekt",
+        "toxic_level": random.randint(1, 10)
+    })
+
+@app.route('/api/profile')
+def api_profile():
+    """Get toxic profile"""
+    api_key = request.args.get('key')
+    if not api_key:
+        return jsonify({"error": "No key, no stats, scrub"}), 401
+    
+    player_data = validate_api_key(api_key)
+    if not player_data or player_data.get('type') != 'player':
+        return jsonify({"error": "Invalid or banned key. L"}), 401
+    
+    player = player_data['data']
+    
+    # Add toxic commentary
+    kd = player['total_kills'] / max(player['total_deaths'], 1)
+    commentary = ""
+    if kd < 0.5:
+        commentary = "Absolute bot behavior"
+    elif kd < 1:
+        commentary = "Mediocre at best"
+    elif kd < 2:
+        commentary = "Not completely terrible"
+    else:
+        commentary = "Okay, you might be decent"
+    
+    return jsonify({
+        **player,
+        "commentary": commentary,
+        "roast": random.choice(TOXIC_PING_RESPONSES)
+    })
+
+@app.route('/api/roast')
+def api_roast():
+    """Get personalized roast"""
+    api_key = request.args.get('key')
+    if not api_key:
+        return jsonify({"roast": "No key? That's pretty lame, ngl"})
+    
+    player_data = validate_api_key(api_key)
+    if player_data and player_data.get('type') == 'player':
+        player = player_data['data']
+        kd = player['total_kills'] / max(player['total_deaths'], 1)
+        if kd < 0.5:
+            roast = f"K/D of {kd:.2f}? My grandma plays better"
+        elif player['losses'] > player['wins']:
+            roast = f"More L's than W's? Professional loser detected"
+        else:
+            roast = random.choice(TOXIC_PING_RESPONSES)
+    else:
+        roast = "Can't even provide a valid key. Typical."
+    
+    return jsonify({"roast": roast})
+
+@app.route('/health')
+def health():
+    """Health check with attitude"""
+    return jsonify({
+        "status": "toxic",
+        "service": "Key-First Toxic Goblin",
+        "version": "5.0",
+        "message": "Still here, still judging you",
+        "bot_active": bot_active,
+        "toxic_level": 11
+    })
+
+# =============================================================================
+# DISCORD BOT FUNCTIONS (unchanged)
+# =============================================================================
+
+def test_discord_token():
+    """Test if Discord token is valid"""
+    global bot_active, bot_info
+    
+    if not DISCORD_TOKEN:
+        logger.error("❌ DISCORD_TOKEN not set")
+        return False
+    
+    try:
+        url = "https://discord.com/api/v10/users/@me"
+        headers = {"Authorization": f"Bot {DISCORD_TOKEN}"}
+        response = requests.get(url, headers=headers, timeout=10)
+        
+        if response.status_code == 200:
+            bot_info = response.json()
+            bot_active = True
+            logger.info(f"✅ Discord bot is ACTIVE: {bot_info['username']}")
+            return True
+        else:
+            logger.error(f"❌ Invalid Discord token: {response.status_code}")
+            return False
+            
+    except Exception as e:
+        logger.error(f"❌ Discord API error: {e}")
+        return False
+
+def register_commands():
+    """Register multi-server slash commands"""
+    if not DISCORD_TOKEN or not DISCORD_CLIENT_ID:
+        logger.error("❌ Cannot register commands")
+        return False
+    
+    commands = [
+        {
+            "name": "ping",
+            "description": "Ping the toxic bot (prepare for flame)",
+            "type": 1
+        },
+        {
+            "name": "register",
+            "description": "Register for TDM (get flamed)",
+            "type": 1,
+            "options": [
+                {
+                    "name": "ingame_name",
+                    "description": "Your in-game name (for roasting)",
+                    "type": 3,
+                    "required": True
+                }
+            ]
+        },
+        {
+            "name": "profile",
+            "description": "Check your stats (and get mocked)",
+            "type": 1
+        },
+        {
+            "name": "roast",
+            "description": "Roast someone (mod only)",
+            "type": 1,
+            "options": [
+                {
+                    "name": "target",
+                    "description": "Who to flame",
+                    "type": 6,
+                    "required": True
+                }
+            ]
+        },
+        {
+            "name": "banish",
+            "description": "Ban a player (server mod only)",
+            "type": 1,
+            "options": [
+                {
+                    "name": "player",
+                    "description": "Player to banish",
+                    "type": 6,
+                    "required": True
+                },
+                {
+                    "name": "reason",
+                    "description": "Why they're trash",
+                    "type": 3,
+                    "required": False
+                }
+            ]
+        },
+        {
+            "name": "leaderboard",
+            "description": "See who's least bad",
+            "type": 1
+        },
+        {
+            "name": "setup",
+            "description": "Setup bot for this server (admin only)",
+            "type": 1
+        }
+    ]
+    
+    try:
+        url = f"https://discord.com/api/v10/applications/{DISCORD_CLIENT_ID}/commands"
+        headers = {
+            "Authorization": f"Bot {DISCORD_TOKEN}",
+            "Content-Type": "application/json"
+        }
+        
+        response = requests.put(url, headers=headers, json=commands, timeout=10)
+        
+        if response.status_code in [200, 201]:
+            logger.info(f"✅ Registered toxic commands")
+            return True
+        else:
+            logger.error(f"❌ Failed to register commands: {response.status_code}")
+            return False
+            
+    except Exception as e:
+        logger.error(f"❌ Error registering commands: {e}")
+        return False
+
+# =============================================================================
+# STARTUP
+# =============================================================================
+
+if __name__ == '__main__':
+    # Initialize database
+    init_db()
+    
+    print(f"\n{'='*80}")
+    print("🔑 TOXIC GOBLIN - KEY-FIRST ACCESS v5.0")
+    print(f"{'='*80}")
+    
+    # Check PyNaCl
+    try:
+        import nacl.signing
+        print("✅ PyNaCl installed - Ready for Discord verification")
+    except ImportError:
+        print("❌ PyNaCl not installed! Run: pip install pynacl")
+    
+    # Test Discord
+    if test_discord_token():
+        print(f"✅ Bot connected: {bot_info.get('username', 'Unknown')}")
+        
+        if register_commands():
+            print("✅ Toxic commands registered globally")
+        else:
+            print("⚠️ Could not register commands")
+    else:
+        print("❌ Discord token not set or invalid")
+    
+    print(f"\n🌐 Web Interface: http://localhost:{port}")
+    print(f"🤖 Interactions: http://localhost:{port}/interactions")
+    print(f"🔑 Login Flow: Key-first access")
+    
+    print(f"\n🎮 TOXIC COMMANDS:")
+    print(f"   /register   - Get API key from Discord")
+    print(f"   /profile    - Check your stats")
+    
+    print(f"\n⚙️ ACCESS SYSTEM:")
+    print(f"   1. Get key via Discord: /register your_name")
+    print(f"   2. Enter key on website")
+    print(f"   3. Access dashboard with stats")
+    print(f"   4. Developer keys get update privileges")
+    
+    print(f"\n🔧 Environment Variables:")
+    print(f"   DEVELOPER_KEYS = comma-separated developer keys")
+    print(f"   DEV_UPDATE_PASSWORD = password for update uploads")
+    
+    print(f"\n💀 'git gud scrub' - Toxic Goblin")
+    print(f"{'='*80}\n")
+    
+    # Start server
+    app.run(host='0.0.0.0', port=port, debug=False)# app.py - SIMPLE ANIMATED WEB + DISCORD BOT
 import os
 import json
 import sqlite3
