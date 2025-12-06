@@ -1,4 +1,4 @@
-# app.py - GOBLIN BOT WITH TICKET SYSTEM
+# app.py - GOBLIN HUT BOT
 import os
 import json
 import sqlite3
@@ -196,7 +196,7 @@ def send_ticket_webhook(ticket_id, user_name, user_id, category, issue, channel_
         category_info = next((c for c in TICKET_CATEGORIES if c["name"] == category), TICKET_CATEGORIES[-1])
         
         embed = {
-            "title": f"{category_info['emoji']} Ticket {action.capitalize()}",
+            "title": f"Ticket {action.capitalize()}",
             "description": f"**Ticket ID:** `{ticket_id}`\n**User:** {user_name} (<@{user_id}>)\n**Category:** {category}\n**Issue:** {issue[:500]}",
             "color": category_info['color'],
             "timestamp": datetime.utcnow().isoformat(),
@@ -212,7 +212,7 @@ def send_ticket_webhook(ticket_id, user_name, user_id, category, issue, channel_
         
         data = {
             "embeds": [embed],
-            "username": "GOBLIN Ticket System",
+            "username": "Goblin Hut Ticket System",
             "avatar_url": "https://i.imgur.com/Lg9YqZm.png"
         }
         
@@ -246,7 +246,7 @@ def create_ticket_channel(guild_id, user_id, user_name, ticket_id, issue, catego
         channel_data = {
             "name": channel_name,
             "type": 0,  # Text channel
-            "topic": f"{category_info['emoji']} {issue[:50]}...",
+            "topic": f"{issue[:50]}...",
             "parent_id": None,
             "permission_overwrites": [
                 {
@@ -280,7 +280,7 @@ def create_ticket_channel(guild_id, user_id, user_name, ticket_id, issue, catego
         
         # Create embed with close button
         embed = {
-            "title": f"{category_info['emoji']} Ticket #{ticket_id}",
+            "title": f"Ticket #{ticket_id}",
             "description": issue,
             "color": category_info['color'],
             "fields": [
@@ -301,14 +301,12 @@ def create_ticket_channel(guild_id, user_id, user_name, ticket_id, issue, catego
                     "type": 2,
                     "style": 4,  # Danger style (red)
                     "label": "Close Ticket",
-                    "emoji": {"name": ""},
                     "custom_id": f"close_ticket_{ticket_id}"
                 },
                 {
                     "type": 2,
                     "style": 2,  # Secondary style (grey)
                     "label": "Add User",
-                    "emoji": {"name": ""},
                     "custom_id": f"add_user_{ticket_id}"
                 }
             ]
@@ -371,7 +369,7 @@ def close_ticket_channel(channel_id, ticket_id, closed_by):
 def generate_secure_key():
     """Generate strong API key"""
     alphabet = string.ascii_letters + string.digits
-    key = 'GOB-' + ''.join(secrets.choice(alphabet) for _ in range(16))
+    key = 'GOB-' + ''.join(secrets.choice(alphabet) for _ in range(20))
     return key
 
 # =============================================================================
@@ -433,35 +431,45 @@ def get_db_connection():
     return conn
 
 # =============================================================================
-# KEY VALIDATION
+# KEY VALIDATION - FIXED VERSION
 # =============================================================================
 
 def validate_api_key(api_key):
-    """Validate API key"""
-    if not api_key or not api_key.startswith("GOB-"):
+    """Validate API key - FIXED VERSION"""
+    if not api_key:
+        return None
+    
+    # Clean the API key
+    api_key = api_key.strip().upper()
+    
+    if not api_key.startswith("GOB-"):
         return None
     
     conn = get_db_connection()
-    player = conn.execute(
-        'SELECT * FROM players WHERE api_key = ?',
-        (api_key.upper(),)
-    ).fetchone()
-    
-    if player:
-        # Update last used time
-        conn.execute(
-            'UPDATE players SET last_used = CURRENT_TIMESTAMP WHERE id = ?',
-            (player['id'],)
-        )
-        conn.commit()
+    try:
+        player = conn.execute(
+            'SELECT * FROM players WHERE api_key = ?',
+            (api_key,)
+        ).fetchone()
         
-        # Convert to dict for session storage
-        player_dict = {key: player[key] for key in player.keys()}
+        if player:
+            # Update last used time
+            conn.execute(
+                'UPDATE players SET last_used = CURRENT_TIMESTAMP WHERE id = ?',
+                (player['id'],)
+            )
+            conn.commit()
+            
+            # Convert to dict for session storage
+            player_dict = {key: player[key] for key in player.keys()}
+            return player_dict
+        else:
+            return None
+    except Exception as e:
+        logger.error(f"Error validating API key: {e}")
+        return None
+    finally:
         conn.close()
-        return player_dict
-    
-    conn.close()
-    return None
 
 # =============================================================================
 # DISCORD BOT FUNCTIONS
@@ -507,7 +515,7 @@ def register_commands():
         },
         {
             "name": "register",
-            "description": "Register and get API key",
+            "description": "Register and get API key (use once)",
             "type": 1,
             "options": [
                 {
@@ -692,7 +700,7 @@ def interactions():
                 }
             })
         
-        # REGISTER COMMAND
+        # REGISTER COMMAND - FIXED TO PREVENT REUSE
         elif command == 'register':
             options = data.get('data', {}).get('options', [])
             in_game_name = options[0].get('value', 'Unknown') if options else 'Unknown'
@@ -714,9 +722,10 @@ def interactions():
                     "type": 4,
                     "data": {
                         "content": (
-                            f"Already registered as {existing['in_game_name']}\n\n"
-                            f"**Your API Key:**\n{api_key}\n\n"
-                            f"Dashboard: {request.host_url}"
+                            f"You are already registered as **{existing['in_game_name']}**\n\n"
+                            f"**Your API Key:**\n```{api_key}```\n\n"
+                            f"**Dashboard:** {request.host_url}\n"
+                            f"Use `/key` to see your key again anytime"
                         ),
                         "flags": 64
                     }
@@ -725,6 +734,7 @@ def interactions():
             is_admin = is_user_admin_in_guild(server_id, user_id)
             api_key = generate_secure_key()
             
+            # Insert new player
             conn.execute('''
                 INSERT INTO players 
                 (discord_id, discord_name, in_game_name, api_key, server_id, is_admin)
@@ -735,17 +745,18 @@ def interactions():
             conn.close()
             
             admin_note = "\n**Admin access detected** - You have additional privileges." if is_admin else ""
-            logger.info(f"User {user_name} registered successfully with key {api_key[:8]}...")
+            logger.info(f"User {user_name} registered successfully with key {api_key}")
             
             return jsonify({
                 "type": 4,
                 "data": {
                     "content": (
-                        f"**Registered Successfully**{admin_note}\n\n"
+                        f"**Registration Successful!**{admin_note}\n\n"
                         f"**Name:** {in_game_name}\n"
-                        f"**API Key:** {api_key}\n\n"
+                        f"**API Key:**\n```{api_key}```\n\n"
                         f"**Dashboard:** {request.host_url}\n"
-                        f"Login to access your full dashboard"
+                        f"Login to access your full dashboard\n\n"
+                        f"**Note:** You can only register once. Use `/key` to see your key again."
                     ),
                     "flags": 64
                 }
@@ -845,7 +856,7 @@ def interactions():
                     }
                 })
         
-        # PROFILE COMMAND
+        # PROFILE COMMAND - FIXED VERSION
         elif command == 'profile':
             logger.info(f"Profile command from {user_name}")
             
@@ -861,28 +872,42 @@ def interactions():
                 return jsonify({
                     "type": 4,
                     "data": {
-                        "content": "Not registered. Use /register [name] first",
+                        "content": "You are not registered. Use `/register [name]` first.",
                         "flags": 64
                     }
                 })
             
-            kd = player['total_kills'] / max(player['total_deaths'], 1)
-            win_rate = (player['wins'] / max(player['wins'] + player['losses'], 1)) * 100
-            total_games = player['wins'] + player['losses']
+            # Calculate stats
+            total_kills = player['total_kills'] or 0
+            total_deaths = player['total_deaths'] or 1
+            wins = player['wins'] or 0
+            losses = player['losses'] or 0
+            
+            kd = total_kills / total_deaths
+            total_games = wins + losses
+            win_rate = (wins / total_games * 100) if total_games > 0 else 0
+            
+            # Format date
+            created_at = player['created_at']
+            try:
+                created_date = datetime.strptime(created_at, '%Y-%m-%d %H:%M:%S')
+                timestamp = int(created_date.timestamp())
+            except:
+                timestamp = int(time.time())
             
             embed = {
                 "title": f"{player['in_game_name']}'s Profile",
                 "color": 0x9d00ff,
                 "fields": [
-                    {"name": "In-Game Name", "value": f"{player['in_game_name']}", "inline": True},
-                    {"name": "Prestige", "value": f"{player['prestige']}", "inline": True},
-                    {"name": "Registered", "value": f"<t:{int(time.mktime(datetime.strptime(player['created_at'], '%Y-%m-%d %H:%M:%S').timestamp()))}:R>", "inline": True},
-                    {"name": "K/D Ratio", "value": f"{kd:.2f} ({player['total_kills']}/{player['total_deaths']})", "inline": True},
-                    {"name": "Win Rate", "value": f"{win_rate:.1f}% ({player['wins']}/{total_games})", "inline": True},
-                    {"name": "Games Played", "value": f"{total_games}", "inline": True},
-                    {"name": "API Key", "value": f"{player['api_key'][:8]}...", "inline": False},
+                    {"name": "In-Game Name", "value": f"`{player['in_game_name']}`", "inline": True},
+                    {"name": "Prestige", "value": f"**{player['prestige']}**", "inline": True},
+                    {"name": "Registered", "value": f"<t:{timestamp}:R>", "inline": True},
+                    {"name": "K/D Ratio", "value": f"**{kd:.2f}** ({total_kills}/{total_deaths})", "inline": True},
+                    {"name": "Win Rate", "value": f"**{win_rate:.1f}%** ({wins}/{total_games})", "inline": True},
+                    {"name": "Games Played", "value": f"**{total_games}**", "inline": True},
+                    {"name": "API Key", "value": f"`{player['api_key'][:8]}...`", "inline": False},
                     {"name": "Dashboard", "value": f"[Click Here]({request.host_url})", "inline": True},
-                    {"name": "Status", "value": "Admin" if player['is_admin'] else "Player", "inline": True}
+                    {"name": "Status", "value": "**Admin**" if player['is_admin'] else "**Player**", "inline": True}
                 ],
                 "footer": {"text": "Use /key to see full API key"},
                 "timestamp": datetime.utcnow().isoformat()
@@ -914,7 +939,7 @@ def interactions():
                 return jsonify({
                     "type": 4,
                     "data": {
-                        "content": "Not registered. Use /register [name] first",
+                        "content": "You are not registered. Use `/register [name]` first.",
                         "flags": 64
                     }
                 })
@@ -926,7 +951,7 @@ def interactions():
                 "data": {
                     "content": (
                         f"**Your API Key**\n\n"
-                        f"{player['api_key']}\n\n"
+                        f"```{player['api_key']}```\n\n"
                         f"**Dashboard:** {request.host_url}\n"
                         f"Use this key to login to your dashboard"
                     ),
@@ -1003,12 +1028,12 @@ def before_request():
             session['user_data'] = user_data
 
 # =============================================================================
-# SIMPLIFIED WEB INTERFACE
+# WEB INTERFACE WITH SUBTLE ANIMATIONS
 # =============================================================================
 
 @app.route('/')
 def home():
-    """Home page - SIMPLIFIED"""
+    """Home page - Goblin Hut"""
     if 'user_key' in session:
         user_data = validate_api_key(session['user_key'])
         if user_data:
@@ -1019,7 +1044,7 @@ def home():
     <!DOCTYPE html>
     <html>
     <head>
-        <title>GOBLIN Dashboard</title>
+        <title>Goblin Hut</title>
         <meta charset="UTF-8">
         <meta name="viewport" content="width=device-width, initial-scale=1.0">
         <style>
@@ -1030,10 +1055,30 @@ def home():
             }
             
             body {
-                font-family: Arial, sans-serif;
-                background: #000;
+                font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+                background: #0a0015;
                 color: #fff;
                 min-height: 100vh;
+                overflow-x: hidden;
+            }
+            
+            .background-glow {
+                position: fixed;
+                width: 500px;
+                height: 500px;
+                border-radius: 50%;
+                background: radial-gradient(circle, rgba(157, 0, 255, 0.1) 0%, transparent 70%);
+                filter: blur(60px);
+                animation: float 20s infinite linear;
+                z-index: -1;
+            }
+            
+            @keyframes float {
+                0% { transform: translate(0, 0) rotate(0deg); }
+                25% { transform: translate(100px, 100px) rotate(90deg); }
+                50% { transform: translate(0, 200px) rotate(180deg); }
+                75% { transform: translate(-100px, 100px) rotate(270deg); }
+                100% { transform: translate(0, 0) rotate(360deg); }
             }
             
             .container {
@@ -1041,91 +1086,138 @@ def home():
                 margin: 0 auto;
                 padding: 40px 20px;
                 text-align: center;
+                position: relative;
+                z-index: 1;
             }
             
             .logo {
                 font-size: 4rem;
-                font-weight: bold;
-                margin-bottom: 20px;
-                color: #9d00ff;
+                font-weight: 900;
+                margin-bottom: 10px;
+                background: linear-gradient(45deg, #9d00ff, #00d4ff);
+                -webkit-background-clip: text;
+                -webkit-text-fill-color: transparent;
                 letter-spacing: 2px;
+                font-family: 'Arial Black', sans-serif;
+                text-shadow: 0 0 20px rgba(157, 0, 255, 0.3);
             }
             
             .subtitle {
-                font-size: 1.2rem;
+                font-size: 1.3rem;
                 color: #b19cd9;
                 margin-bottom: 40px;
+                animation: fadeIn 1.5s ease-out;
                 font-weight: 300;
             }
             
+            @keyframes fadeIn {
+                from { opacity: 0; transform: translateY(20px); }
+                to { opacity: 1; transform: translateY(0); }
+            }
+            
             .login-box {
-                background: rgba(20, 10, 40, 0.9);
-                border-radius: 15px;
+                background: rgba(20, 10, 40, 0.8);
+                backdrop-filter: blur(10px);
+                border-radius: 20px;
                 padding: 40px;
-                border: 1px solid #9d00ff;
+                border: 1px solid rgba(157, 0, 255, 0.2);
+                box-shadow: 0 10px 30px rgba(0, 0, 0, 0.3);
+                animation: slideUp 0.8s ease-out;
+            }
+            
+            @keyframes slideUp {
+                from { opacity: 0; transform: translateY(30px); }
+                to { opacity: 1; transform: translateY(0); }
             }
             
             .key-input {
                 width: 100%;
-                padding: 20px;
-                background: rgba(0, 0, 0, 0.6);
+                padding: 18px;
+                background: rgba(0, 0, 0, 0.5);
                 border: 2px solid #9d00ff;
-                border-radius: 10px;
+                border-radius: 12px;
                 color: #fff;
                 font-size: 16px;
                 text-align: center;
                 margin-bottom: 25px;
+                transition: all 0.3s;
                 font-family: monospace;
+                letter-spacing: 1px;
             }
             
             .key-input:focus {
                 outline: none;
-                border-color: #ff00ff;
+                border-color: #00d4ff;
+                box-shadow: 0 0 15px rgba(0, 212, 255, 0.3);
+                transform: scale(1.02);
             }
             
             .login-btn {
                 width: 100%;
-                padding: 20px;
-                background: #9d00ff;
+                padding: 18px;
+                background: linear-gradient(45deg, #9d00ff, #00d4ff);
                 color: white;
                 border: none;
-                border-radius: 10px;
-                font-size: 18px;
+                border-radius: 12px;
+                font-size: 16px;
                 font-weight: bold;
                 cursor: pointer;
+                transition: all 0.3s;
+                position: relative;
+                overflow: hidden;
             }
             
             .login-btn:hover {
-                background: #ff00ff;
+                transform: translateY(-3px);
+                box-shadow: 0 10px 20px rgba(157, 0, 255, 0.3);
+            }
+            
+            .login-btn:active {
+                transform: translateY(-1px);
             }
             
             .login-btn:disabled {
                 opacity: 0.7;
                 cursor: not-allowed;
+                transform: none !important;
             }
             
             .error-box {
-                background: rgba(255, 0, 0, 0.15);
-                border: 2px solid #ff0000;
+                background: rgba(255, 0, 0, 0.1);
+                border: 1px solid rgba(255, 0, 0, 0.3);
                 border-radius: 10px;
                 padding: 15px;
                 margin-top: 20px;
                 color: #ff6b6b;
                 display: none;
+                animation: shake 0.5s;
+            }
+            
+            @keyframes shake {
+                0%, 100% { transform: translateX(0); }
+                25% { transform: translateX(-5px); }
+                75% { transform: translateX(5px); }
             }
             
             .info-box {
-                background: rgba(30, 15, 60, 0.9);
-                border: 1px solid #9d00ff;
+                background: rgba(30, 15, 60, 0.8);
+                border: 1px solid rgba(157, 0, 255, 0.2);
                 border-radius: 15px;
                 padding: 25px;
                 margin-top: 30px;
                 text-align: left;
                 color: #d4b3ff;
+                backdrop-filter: blur(10px);
+                animation: fadeInDelay 1s ease-out 0.5s both;
+            }
+            
+            @keyframes fadeInDelay {
+                from { opacity: 0; transform: translateY(20px); }
+                to { opacity: 1; transform: translateY(0); }
             }
             
             .info-box strong {
-                color: #ff00ff;
+                color: #00d4ff;
                 display: block;
                 margin-bottom: 15px;
                 font-size: 1.1rem;
@@ -1137,50 +1229,71 @@ def home():
                 border-radius: 5px;
                 font-family: 'Courier New', monospace;
                 color: #9d00ff;
+                margin: 0 2px;
             }
             
             .bot-status {
                 padding: 12px 25px;
-                background: rgba(30, 15, 60, 0.9);
-                border: 2px solid #9d00ff;
+                background: rgba(30, 15, 60, 0.8);
+                border: 1px solid rgba(157, 0, 255, 0.3);
                 border-radius: 25px;
                 margin-top: 30px;
                 display: inline-block;
                 font-weight: 600;
                 font-size: 1rem;
+                backdrop-filter: blur(10px);
+                animation: pulse 2s infinite;
+            }
+            
+            @keyframes pulse {
+                0%, 100% { box-shadow: 0 5px 15px rgba(0, 0, 0, 0.2); }
+                50% { box-shadow: 0 5px 20px rgba(157, 0, 255, 0.2); }
             }
             
             .status-online {
                 color: #00ff9d;
-                border-color: #00ff9d;
+                border-color: rgba(0, 255, 157, 0.3);
             }
             
             .status-offline {
                 color: #ff6b6b;
-                border-color: #ff6b6b;
+                border-color: rgba(255, 107, 107, 0.3);
+            }
+            
+            .divider {
+                height: 1px;
+                background: linear-gradient(90deg, transparent, #9d00ff, transparent);
+                margin: 30px 0;
+                width: 100%;
             }
             
             @media (max-width: 768px) {
                 .container { padding: 20px; }
                 .logo { font-size: 3rem; }
                 .login-box { padding: 30px 20px; }
+                .key-input { padding: 15px; }
+                .login-btn { padding: 15px; }
             }
         </style>
     </head>
     <body>
+        <div class="background-glow" style="top: 10%; left: 10%; animation-delay: 0s;"></div>
+        <div class="background-glow" style="top: 60%; right: 10%; animation-delay: -5s; background: radial-gradient(circle, rgba(0, 212, 255, 0.08) 0%, transparent 70%);"></div>
+        <div class="background-glow" style="bottom: 20%; left: 20%; animation-delay: -10s; background: radial-gradient(circle, rgba(157, 0, 255, 0.08) 0%, transparent 70%);"></div>
+        
         <div class="container">
-            <div class="logo">GOBLIN</div>
-            <div class="subtitle">Enter your API key to access the dashboard</div>
+            <div class="logo">GOBLIN HUT</div>
+            <div class="subtitle">Enter your API key to enter the cave</div>
             
             <div class="login-box">
                 <input type="password" 
                        class="key-input" 
                        id="apiKey" 
-                       placeholder="GOB-XXXXXXXXXXXXXXXX"
+                       placeholder="GOB-XXXXXXXXXXXXXXXXXXXX"
                        autocomplete="off">
                 
                 <button class="login-btn" onclick="validateKey()" id="loginBtn">
-                    Enter Dashboard
+                    Enter Cave
                 </button>
                 
                 <div class="error-box" id="errorMessage">
@@ -1188,11 +1301,13 @@ def home():
                 </div>
             </div>
             
+            <div class="divider"></div>
+            
             <div class="info-box">
                 <strong>How to get your API key:</strong>
-                <p>1. Use /register your_name in Discord</p>
-                <p>2. Copy your GOB-XXXXXXX key from bot response</p>
-                <p>3. Use /key to see your key anytime</p>
+                <p>1. Use <code>/register your_name</code> in Discord <em>(one-time only)</em></p>
+                <p>2. Copy your <code>GOB-XXXXXXXXXXXXXXX</code> key from bot response</p>
+                <p>3. Use <code>/key</code> to see your key anytime</p>
                 <p>4. Enter it above to access your dashboard</p>
             </div>
             
@@ -1219,7 +1334,7 @@ def home():
                     return;
                 }
                 
-                btn.innerHTML = 'Checking...';
+                btn.innerHTML = 'Entering cave...';
                 btn.disabled = true;
                 
                 try {
@@ -1232,18 +1347,19 @@ def home():
                     const data = await response.json();
                     
                     if (data.valid) {
-                        btn.innerHTML = 'Access Granted';
+                        btn.innerHTML = 'Access granted!';
+                        btn.style.background = 'linear-gradient(45deg, #00ff9d, #00d4ff)';
                         setTimeout(() => window.location.href = '/dashboard', 500);
                     } else {
                         errorDiv.textContent = data.error || 'Invalid API key';
                         errorDiv.style.display = 'block';
-                        btn.innerHTML = 'Enter Dashboard';
+                        btn.innerHTML = 'Enter Cave';
                         btn.disabled = false;
                     }
                 } catch (error) {
                     errorDiv.textContent = 'Connection error. Please try again.';
                     errorDiv.style.display = 'block';
-                    btn.innerHTML = 'Enter Dashboard';
+                    btn.innerHTML = 'Enter Cave';
                     btn.disabled = false;
                 }
             }
@@ -1281,7 +1397,7 @@ def home():
 
 @app.route('/api/validate-key', methods=['POST'])
 def api_validate_key():
-    """Validate API key"""
+    """Validate API key - FIXED VERSION"""
     data = request.get_json()
     api_key = data.get('api_key', '').strip().upper()
     
@@ -1311,7 +1427,7 @@ def logout():
 
 @app.route('/dashboard')
 def dashboard():
-    """Profile Dashboard - SIMPLIFIED"""
+    """Profile Dashboard - Goblin Hut"""
     if 'user_key' not in session:
         return redirect(url_for('home'))
     
@@ -1324,9 +1440,14 @@ def dashboard():
         session['user_data'] = user_data
     
     # Calculate stats
-    kd = user_data.get('total_kills', 0) / max(user_data.get('total_deaths', 1), 1)
-    total_games = user_data.get('wins', 0) + user_data.get('losses', 0)
-    win_rate = (user_data.get('wins', 0) / total_games * 100) if total_games > 0 else 0
+    total_kills = user_data.get('total_kills', 0)
+    total_deaths = max(user_data.get('total_deaths', 1), 1)
+    wins = user_data.get('wins', 0)
+    losses = user_data.get('losses', 0)
+    
+    kd = total_kills / total_deaths
+    total_games = wins + losses
+    win_rate = (wins / total_games * 100) if total_games > 0 else 0
     
     # Format dates
     from datetime import datetime as dt
@@ -1345,11 +1466,29 @@ def dashboard():
     
     is_admin = user_data.get('is_admin', 0)
     
-    # Simple dashboard HTML
+    # Get open tickets for this user
+    conn = get_db_connection()
+    tickets = conn.execute(
+        'SELECT * FROM tickets WHERE discord_id = ? AND status = "open" ORDER BY created_at DESC LIMIT 3',
+        (user_data['discord_id'],)
+    ).fetchall()
+    conn.close()
+    
+    # Build tickets HTML
+    tickets_html = ''
+    for ticket in tickets:
+        category_info = next((c for c in TICKET_CATEGORIES if c["name"] == ticket['category']), TICKET_CATEGORIES[-1])
+        color_hex = f"#{hex(category_info['color'])[2:].zfill(6)}"
+        tickets_html += f'<div class="ticket-card"><div class="ticket-header"><div class="ticket-title"><strong>TICKET-{ticket["ticket_id"]}</strong></div><span class="status-open">OPEN</span></div><p class="ticket-issue">{ticket["issue"][:100]}...</p><div class="ticket-footer"><span class="ticket-category" style="color: {color_hex};">{ticket["category"]}</span><span class="ticket-date">{ticket["created_at"][:10]}</span></div></div>'
+    
+    if not tickets_html:
+        tickets_html = '<div class="no-tickets"><p>No open tickets</p></div>'
+    
+    # Build the HTML response
     html = f'''<!DOCTYPE html>
 <html>
 <head>
-    <title>GOBLIN Profile</title>
+    <title>Goblin Hut - Profile</title>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <style>
@@ -1360,16 +1499,36 @@ def dashboard():
         }}
         
         body {{
-            font-family: Arial, sans-serif;
-            background: #000;
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background: #0a0015;
             color: #fff;
             min-height: 100vh;
+            overflow-x: hidden;
+        }}
+        
+        .background-glow {{
+            position: fixed;
+            width: 600px;
+            height: 600px;
+            border-radius: 50%;
+            background: radial-gradient(circle, rgba(157, 0, 255, 0.08) 0%, transparent 70%);
+            filter: blur(80px);
+            animation: float 25s infinite linear;
+            z-index: -1;
+        }}
+        
+        @keyframes float {{
+            0% {{ transform: translate(0, 0) rotate(0deg); }}
+            33% {{ transform: translate(200px, 200px) rotate(120deg); }}
+            66% {{ transform: translate(-200px, 100px) rotate(240deg); }}
+            100% {{ transform: translate(0, 0) rotate(360deg); }}
         }}
         
         .header {{
-            background: #0f051e;
-            border-bottom: 3px solid #ff00ff;
-            padding: 20px 40px;
+            background: rgba(15, 5, 30, 0.9);
+            backdrop-filter: blur(10px);
+            border-bottom: 1px solid rgba(157, 0, 255, 0.3);
+            padding: 25px 50px;
             display: flex;
             justify-content: space-between;
             align-items: center;
@@ -1379,9 +1538,12 @@ def dashboard():
         }}
         
         .logo {{
-            font-size: 1.8rem;
-            font-weight: bold;
-            color: #ff00ff;
+            font-size: 2rem;
+            font-weight: 900;
+            background: linear-gradient(45deg, #9d00ff, #00d4ff);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            font-family: 'Arial Black', sans-serif;
         }}
         
         .user-info {{
@@ -1391,35 +1553,37 @@ def dashboard():
         }}
         
         .user-name {{
-            font-size: 1.2rem;
-            color: #ff00ff;
+            font-size: 1.3rem;
+            color: #00d4ff;
             font-weight: bold;
         }}
         
         .logout-btn {{
-            padding: 10px 20px;
-            background: #ff416c;
+            padding: 10px 25px;
+            background: linear-gradient(45deg, #ff416c, #ff4b2b);
             color: white;
             border: none;
             border-radius: 10px;
             font-weight: bold;
             cursor: pointer;
             text-decoration: none;
+            transition: all 0.3s;
         }}
         
         .logout-btn:hover {{
-            background: #ff4b2b;
+            transform: translateY(-3px);
+            box-shadow: 0 5px 15px rgba(255, 65, 108, 0.3);
         }}
         
         .container {{
             max-width: 1200px;
             margin: 0 auto;
-            padding: 30px;
+            padding: 40px;
         }}
         
         .profile-section {{
             display: grid;
-            grid-template-columns: 1fr 350px;
+            grid-template-columns: 1fr 400px;
             gap: 30px;
             margin-bottom: 40px;
         }}
@@ -1431,37 +1595,62 @@ def dashboard():
         }}
         
         .profile-card, .key-card {{
-            background: #190a32;
-            border-radius: 15px;
-            padding: 30px;
-            border: 1px solid #ff00ff;
+            background: rgba(25, 10, 50, 0.8);
+            backdrop-filter: blur(10px);
+            border-radius: 20px;
+            padding: 40px;
+            border: 1px solid rgba(157, 0, 255, 0.2);
+            box-shadow: 0 10px 30px rgba(0, 0, 0, 0.2);
+            animation: slideUp 0.8s ease-out;
+        }}
+        
+        .key-card {{
+            animation-delay: 0.2s;
+        }}
+        
+        @keyframes slideUp {{
+            from {{ opacity: 0; transform: translateY(30px); }}
+            to {{ opacity: 1; transform: translateY(0); }}
         }}
         
         .profile-header {{
             display: flex;
             align-items: center;
-            gap: 20px;
+            gap: 25px;
             margin-bottom: 30px;
-            padding-bottom: 20px;
-            border-bottom: 2px solid #9d00ff;
+            padding-bottom: 25px;
+            border-bottom: 1px solid rgba(157, 0, 255, 0.3);
         }}
         
         .avatar {{
-            width: 80px;
-            height: 80px;
-            background: linear-gradient(45deg, #ff00ff, #9d00ff);
+            width: 100px;
+            height: 100px;
+            background: linear-gradient(45deg, #9d00ff, #00d4ff);
             border-radius: 50%;
             display: flex;
             align-items: center;
             justify-content: center;
-            font-size: 2rem;
+            font-size: 2.5rem;
             color: white;
+            animation: rotate 20s linear infinite;
+        }}
+        
+        @keyframes rotate {{
+            from {{ transform: rotate(0deg); }}
+            to {{ transform: rotate(360deg); }}
         }}
         
         .profile-info h2 {{
-            font-size: 2rem;
+            font-size: 2.2rem;
             margin-bottom: 5px;
-            color: #ff00ff;
+            background: linear-gradient(45deg, #9d00ff, #00d4ff);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+        }}
+        
+        .profile-info p {{
+            color: #b19cd9;
+            font-size: 1rem;
         }}
         
         .stats-grid {{
@@ -1474,15 +1663,23 @@ def dashboard():
         .stat-item {{
             background: rgba(0, 0, 0, 0.4);
             border-radius: 15px;
-            padding: 20px;
+            padding: 25px;
             text-align: center;
-            border: 1px solid #9d00ff;
+            border: 1px solid rgba(157, 0, 255, 0.2);
+            transition: all 0.3s;
+        }}
+        
+        .stat-item:hover {{
+            transform: translateY(-5px);
+            border-color: rgba(0, 212, 255, 0.4);
+            box-shadow: 0 10px 20px rgba(0, 212, 255, 0.1);
         }}
         
         .stat-value {{
             font-size: 2.5rem;
-            font-weight: bold;
+            font-weight: 900;
             margin: 10px 0;
+            font-family: 'Arial Black', sans-serif;
         }}
         
         .stat-label {{
@@ -1490,35 +1687,125 @@ def dashboard():
             font-size: 0.9rem;
             text-transform: uppercase;
             letter-spacing: 1px;
+            margin-bottom: 5px;
         }}
         
         .key-display {{
-            background: rgba(0, 0, 0, 0.6);
-            border: 2px solid #9d00ff;
+            background: rgba(0, 0, 0, 0.5);
+            border: 1px solid rgba(157, 0, 255, 0.4);
             border-radius: 15px;
-            padding: 20px;
-            margin: 20px 0;
+            padding: 25px;
+            margin: 25px 0;
             font-family: 'Courier New', monospace;
             color: #00ff9d;
             text-align: center;
             cursor: pointer;
             word-break: break-all;
+            transition: all 0.3s;
+        }}
+        
+        .key-display:hover {{
+            border-color: rgba(0, 212, 255, 0.6);
+            box-shadow: 0 0 15px rgba(0, 212, 255, 0.2);
         }}
         
         .action-btn {{
             width: 100%;
-            padding: 15px;
-            background: #9d00ff;
+            padding: 16px;
+            background: linear-gradient(45deg, #9d00ff, #00d4ff);
             color: white;
             border: none;
-            border-radius: 10px;
+            border-radius: 12px;
             font-weight: bold;
             cursor: pointer;
             margin: 10px 0;
+            transition: all 0.3s;
         }}
         
         .action-btn:hover {{
-            background: #ff00ff;
+            transform: translateY(-3px);
+            box-shadow: 0 10px 20px rgba(157, 0, 255, 0.2);
+        }}
+        
+        .admin-btn {{
+            background: linear-gradient(45deg, #00ff9d, #00d4ff);
+        }}
+        
+        .tickets-section {{
+            background: rgba(25, 10, 50, 0.8);
+            backdrop-filter: blur(10px);
+            border-radius: 20px;
+            padding: 40px;
+            border: 1px solid rgba(157, 0, 255, 0.2);
+            box-shadow: 0 10px 30px rgba(0, 0, 0, 0.2);
+            animation: slideUp 0.8s ease-out 0.4s both;
+        }}
+        
+        .tickets-section h3 {{
+            font-size: 1.8rem;
+            margin-bottom: 30px;
+            color: #00d4ff;
+        }}
+        
+        .tickets-grid {{
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+            gap: 20px;
+        }}
+        
+        .ticket-card {{
+            background: rgba(20, 5, 40, 0.9);
+            border-radius: 15px;
+            padding: 25px;
+            border: 1px solid rgba(157, 0, 255, 0.2);
+            transition: all 0.3s;
+        }}
+        
+        .ticket-card:hover {{
+            transform: translateY(-5px);
+            border-color: rgba(0, 212, 255, 0.4);
+            box-shadow: 0 10px 20px rgba(0, 212, 255, 0.1);
+        }}
+        
+        .ticket-header {{
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 15px;
+        }}
+        
+        .status-open {{
+            color: #00ff9d;
+            font-weight: bold;
+            font-size: 0.8rem;
+            padding: 5px 12px;
+            background: rgba(0, 255, 157, 0.1);
+            border-radius: 15px;
+        }}
+        
+        .ticket-issue {{
+            color: #d4b3ff;
+            margin-bottom: 20px;
+            font-size: 1rem;
+            line-height: 1.5;
+        }}
+        
+        .ticket-footer {{
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            color: #888;
+            font-size: 0.9rem;
+        }}
+        
+        .ticket-category {{
+            font-weight: bold;
+        }}
+        
+        .no-tickets {{
+            text-align: center;
+            padding: 40px;
+            color: #666;
         }}
         
         @media (max-width: 768px) {{
@@ -1526,34 +1813,44 @@ def dashboard():
                 flex-direction: column;
                 gap: 15px;
                 text-align: center;
-                padding: 15px;
+                padding: 20px;
             }}
             .container {{
-                padding: 15px;
+                padding: 20px;
             }}
-            .profile-card, .key-card {{
-                padding: 20px 15px;
+            .profile-section {{
+                gap: 20px;
+            }}
+            .profile-card, .key-card, .tickets-section {{
+                padding: 25px 20px;
             }}
             .stats-grid {{
                 grid-template-columns: 1fr;
             }}
+            .tickets-grid {{
+                grid-template-columns: 1fr;
+            }}
             .avatar {{
-                width: 60px;
-                height: 60px;
-                font-size: 1.5rem;
+                width: 80px;
+                height: 80px;
+                font-size: 2rem;
             }}
             .profile-info h2 {{
-                font-size: 1.5rem;
+                font-size: 1.8rem;
             }}
         }}
     </style>
 </head>
 <body>
+    <div class="background-glow" style="top: 10%; left: 5%; animation-delay: 0s;"></div>
+    <div class="background-glow" style="top: 60%; right: 5%; animation-delay: -8s; background: radial-gradient(circle, rgba(0, 212, 255, 0.06) 0%, transparent 70%);"></div>
+    <div class="background-glow" style="bottom: 10%; left: 30%; animation-delay: -16s; background: radial-gradient(circle, rgba(157, 0, 255, 0.06) 0%, transparent 70%);"></div>
+    
     <div class="header">
-        <div class="logo">GOBLIN PROFILE</div>
+        <div class="logo">GOBLIN HUT</div>
         <div class="user-info">
             <div class="user-name">{user_data.get('in_game_name', 'Player')}</div>
-            <a href="/logout" class="logout-btn">Logout</a>
+            <a href="/logout" class="logout-btn">Exit Cave</a>
         </div>
     </div>
     
@@ -1566,7 +1863,7 @@ def dashboard():
                     </div>
                     <div class="profile-info">
                         <h2>{user_data.get('in_game_name', 'Player')}</h2>
-                        <p style="color: #b19cd9;">Joined on {created_str} • Prestige {user_data.get('prestige', 0)}</p>
+                        <p>Member for {days_ago} days • {total_games} games • Prestige {user_data.get('prestige', 0)}</p>
                     </div>
                 </div>
                 
@@ -1574,31 +1871,35 @@ def dashboard():
                     <div class="stat-item">
                         <div class="stat-label">K/D Ratio</div>
                         <div class="stat-value" style="color: #00ff9d;">{kd:.2f}</div>
-                        <div style="color: #d4b3ff; font-size: 0.8rem;">{user_data.get('total_kills', 0)} kills / {user_data.get('total_deaths', 0)} deaths</div>
+                        <div style="color: #d4b3ff; font-size: 0.8rem;">{total_kills} kills / {total_deaths} deaths</div>
                     </div>
                     
                     <div class="stat-item">
                         <div class="stat-label">Win Rate</div>
                         <div class="stat-value" style="color: #00ff9d;">{win_rate:.1f}%</div>
-                        <div style="color: #d4b3ff; font-size: 0.8rem;">{user_data.get('wins', 0)} wins / {user_data.get('losses', 0)} losses</div>
+                        <div style="color: #d4b3ff; font-size: 0.8rem;">{wins} wins / {losses} losses</div>
                     </div>
                     
                     <div class="stat-item">
                         <div class="stat-label">Games Played</div>
                         <div class="stat-value" style="color: #9d00ff;">{total_games}</div>
-                        <div style="color: #d4b3ff; font-size: 0.8rem;">Total matches</div>
+                        <div style="color: #d4b3ff; font-size: 0.8rem;">Total matches completed</div>
                     </div>
                     
                     <div class="stat-item">
                         <div class="stat-label">Prestige Level</div>
                         <div class="stat-value" style="color: #ffd700;">{user_data.get('prestige', 0)}</div>
-                        <div style="color: #d4b3ff; font-size: 0.8rem;">Current rank</div>
+                        <div style="color: #d4b3ff; font-size: 0.8rem;">Current prestige rank</div>
                     </div>
                 </div>
             </div>
             
             <div class="key-card">
                 <h3 style="color: #00d4ff; margin-bottom: 20px;">Your API Key</h3>
+                <p style="color: #b19cd9; margin-bottom: 20px; line-height: 1.5;">
+                    Keep this key secure. Use it to access your dashboard and API features.
+                    Do not share it with anyone.
+                </p>
                 
                 <div class="key-display" id="apiKeyDisplay" onclick="this.classList.add('revealed')">
                     {session['user_key']}
@@ -1612,7 +1913,14 @@ def dashboard():
                     Create Ticket
                 </button>
                 
-                { '<button class="action-btn" onclick="changeKey()" style="background: #00ff9d;">Change Key (Admin)</button>' if is_admin else '' }
+                { '<button class="action-btn admin-btn" onclick="changeKey()">Change Key (Admin)</button>' if is_admin else '' }
+            </div>
+        </div>
+        
+        <div class="tickets-section">
+            <h3>Your Open Tickets</h3>
+            <div class="tickets-grid">
+                {tickets_html}
             </div>
         </div>
     </div>
@@ -1736,7 +2044,7 @@ def health():
     return jsonify({
         "status": "healthy" if bot_active else "offline",
         "bot_active": bot_active,
-        "service": "GOBLIN Bot",
+        "service": "Goblin Hut Bot",
         "timestamp": datetime.utcnow().isoformat()
     })
 
@@ -1748,7 +2056,7 @@ if __name__ == '__main__':
     init_db()
     
     print("\n" + "="*60)
-    print("GOBLIN BOT")
+    print("GOBLIN HUT BOT")
     print("="*60)
     
     if test_discord_token():
@@ -1767,23 +2075,29 @@ if __name__ == '__main__':
     
     print("\nDiscord Commands:")
     print("   /ping - Check bot status")
-    print("   /register [name] - Get API key")
-    print("   /profile - Show your profile")
+    print("   /register [name] - Get API key (one-time only)")
+    print("   /profile - Show your profile and stats")
     print("   /key - Show your API key")
-    print("   /ticket [issue] [category] - Create ticket")
+    print("   /ticket [issue] [category] - Create support ticket")
     print("   /close - Close current ticket")
+    
+    print("\nKey Features:")
+    print("   • One-time registration only")
+    print("   • Fixed API key validation")
+    print("   • Working profile command")
+    print("   • Subtle web animations")
+    print("   • Goblin Hut theme")
     
     print("\nEnvironment Check:")
     print(f"   DISCORD_TOKEN: {'Set' if DISCORD_TOKEN else 'Not set'}")
     print(f"   DISCORD_CLIENT_ID: {'Set' if DISCORD_CLIENT_ID else 'Not set'}")
     print(f"   DISCORD_PUBLIC_KEY: {'Set' if DISCORD_PUBLIC_KEY else 'Not set'}")
-    print(f"   MOD_ROLE_ID: {'Set' if MOD_ROLE_ID else 'Not set'}")
     
     print("\nTroubleshooting:")
-    print("   1. Make sure all Discord env variables are set")
-    print("   2. Check that the bot has proper permissions in Discord")
-    print("   3. Verify the bot is added to your server")
-    print("   4. Check logs for any errors")
+    print("   1. Install required library: pip install pynacl")
+    print("   2. Set all Discord environment variables")
+    print("   3. Check bot has proper permissions")
+    print("   4. View logs for detailed errors")
     
     print("\n" + "="*60 + "\n")
     
