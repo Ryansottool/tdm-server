@@ -1676,7 +1676,7 @@ def verify_discord_signature(request):
 @app.before_request
 def before_request():
     """Check session before each request"""
-    if request.endpoint not in ['home', 'api_validate_key', 'health', 'api_stats', 'static', 'interactions']:
+    if request.endpoint not in ['home', 'api_validate_key', 'health', 'api_stats', 'api_leaderboard', 'static', 'interactions']:
         if 'user_key' not in session:
             return redirect(url_for('home'))
         
@@ -1743,12 +1743,34 @@ def home():
             }
             
             .container {
-                max-width: 500px;
+                max-width: 1200px;
                 margin: 0 auto;
                 padding: 40px 20px;
-                text-align: center;
+                display: grid;
+                grid-template-columns: 1fr 400px;
+                gap: 40px;
                 position: relative;
                 z-index: 1;
+            }
+            
+            @media (max-width: 1100px) {
+                .container {
+                    grid-template-columns: 1fr;
+                    max-width: 500px;
+                }
+            }
+            
+            .login-section {
+                animation: fadeIn 1s ease-out;
+            }
+            
+            .leaderboard-section {
+                animation: fadeIn 1.5s ease-out;
+            }
+            
+            @keyframes fadeIn {
+                from { opacity: 0; transform: translateY(20px); }
+                to { opacity: 1; transform: translateY(0); }
             }
             
             .logo {
@@ -1769,11 +1791,6 @@ def home():
                 margin-bottom: 40px;
                 animation: fadeIn 1.5s ease-out;
                 font-weight: 300;
-            }
-            
-            @keyframes fadeIn {
-                from { opacity: 0; transform: translateY(20px); }
-                to { opacity: 1; transform: translateY(0); }
             }
             
             .login-box {
@@ -1833,10 +1850,6 @@ def home():
                 box-shadow: 0 10px 20px rgba(157, 0, 255, 0.3);
             }
             
-            .login-btn:active {
-                transform: translateY(-1px);
-            }
-            
             .login-btn:disabled {
                 opacity: 0.7;
                 cursor: not-allowed;
@@ -1893,6 +1906,129 @@ def home():
                 margin: 0 2px;
             }
             
+            .leaderboard-box {
+                background: rgba(20, 10, 40, 0.9);
+                backdrop-filter: blur(10px);
+                border-radius: 20px;
+                padding: 30px;
+                border: 1px solid rgba(157, 0, 255, 0.2);
+                box-shadow: 0 10px 30px rgba(0, 0, 0, 0.3);
+                height: fit-content;
+                animation: slideUp 1s ease-out;
+            }
+            
+            .leaderboard-header {
+                display: flex;
+                justify-content: space-between;
+                align-items: center;
+                margin-bottom: 25px;
+                padding-bottom: 15px;
+                border-bottom: 1px solid rgba(157, 0, 255, 0.3);
+            }
+            
+            .leaderboard-title {
+                font-size: 1.8rem;
+                background: linear-gradient(45deg, #00ff9d, #00d4ff);
+                -webkit-background-clip: text;
+                -webkit-text-fill-color: transparent;
+                font-weight: bold;
+            }
+            
+            .refresh-btn {
+                background: rgba(157, 0, 255, 0.2);
+                border: 1px solid rgba(157, 0, 255, 0.4);
+                color: #b19cd9;
+                border-radius: 8px;
+                padding: 8px 15px;
+                cursor: pointer;
+                font-size: 0.9rem;
+                transition: all 0.3s;
+            }
+            
+            .refresh-btn:hover {
+                background: rgba(157, 0, 255, 0.3);
+                transform: scale(1.05);
+            }
+            
+            .leaderboard-list {
+                list-style: none;
+            }
+            
+            .leaderboard-item {
+                display: flex;
+                align-items: center;
+                padding: 15px;
+                margin-bottom: 12px;
+                background: rgba(0, 0, 0, 0.3);
+                border-radius: 12px;
+                border: 1px solid rgba(255, 255, 255, 0.05);
+                transition: all 0.3s;
+            }
+            
+            .leaderboard-item:hover {
+                transform: translateX(5px);
+                border-color: rgba(157, 0, 255, 0.3);
+                background: rgba(157, 0, 255, 0.1);
+            }
+            
+            .rank {
+                font-size: 1.5rem;
+                font-weight: bold;
+                width: 40px;
+                text-align: center;
+                margin-right: 15px;
+            }
+            
+            .rank-1 { color: #ffd700; }
+            .rank-2 { color: #c0c0c0; }
+            .rank-3 { color: #cd7f32; }
+            .rank-other { color: #00d4ff; }
+            
+            .player-info {
+                flex-grow: 1;
+            }
+            
+            .player-name {
+                font-weight: bold;
+                margin-bottom: 5px;
+                color: #fff;
+            }
+            
+            .player-stats {
+                display: flex;
+                gap: 15px;
+                font-size: 0.85rem;
+                color: #b19cd9;
+            }
+            
+            .stat {
+                display: flex;
+                align-items: center;
+                gap: 5px;
+            }
+            
+            .stat-value {
+                color: #00ff9d;
+                font-weight: bold;
+            }
+            
+            .prestige-badge {
+                background: linear-gradient(45deg, #ffd700, #ffa500);
+                color: #000;
+                padding: 3px 8px;
+                border-radius: 10px;
+                font-size: 0.8rem;
+                font-weight: bold;
+                margin-left: 10px;
+            }
+            
+            .empty-leaderboard {
+                text-align: center;
+                padding: 40px;
+                color: #666;
+                font-size: 1.1rem;
+            }
+            
             .bot-status {
                 padding: 12px 25px;
                 background: rgba(30, 15, 60, 0.8);
@@ -1928,54 +2064,98 @@ def home():
                 width: 100%;
             }
             
+            .github-link {
+                display: block;
+                margin-top: 20px;
+                text-align: center;
+                color: #b19cd9;
+                font-size: 0.9rem;
+            }
+            
+            .github-link a {
+                color: #00d4ff;
+                text-decoration: none;
+            }
+            
+            .github-link a:hover {
+                text-decoration: underline;
+            }
+            
             @media (max-width: 768px) {
-                .container { padding: 20px; }
+                .container { 
+                    padding: 20px;
+                    grid-template-columns: 1fr;
+                }
                 .logo { font-size: 3rem; }
                 .login-box { padding: 30px 20px; }
                 .key-input { padding: 15px; }
                 .login-btn { padding: 15px; }
+                .leaderboard-box { padding: 20px; }
             }
         </style>
     </head>
     <body>
         <div class="background-glow" style="top: 10%; left: 10%; animation-delay: 0s;"></div>
         <div class="background-glow" style="top: 60%; right: 10%; animation-delay: -5s; background: radial-gradient(circle, rgba(0, 212, 255, 0.08) 0%, transparent 70%);"></div>
-        <div class="background-glow" style="bottom: 20%; left: 20%; animation-delay: -10s; background: radial-gradient(circle, rgba(157, 0, 255, 0.08) 0%, transparent 70%);"></div>
+        <div class="background-glow" style="bottom: 10%; left: 30%; animation-delay: -16s; background: radial-gradient(circle, rgba(157, 0, 255, 0.06) 0%, transparent 70%);"></div>
         
         <div class="container">
-            <div class="logo">GOBLIN HUT</div>
-            <div class="subtitle">Enter your API key to enter the cave</div>
-            
-            <div class="login-box">
-                <input type="text" 
-                       class="key-input" 
-                       id="apiKey" 
-                       placeholder="GOB-XXXXXXXXXXXXXXXXXXXX"
-                       pattern="GOB-[A-Z0-9]{20}"
-                       title="Format: GOB- followed by 20 uppercase letters/numbers"
-                       autocomplete="off">
+            <div class="login-section">
+                <div class="logo">GOBLIN HUT</div>
+                <div class="subtitle">Enter your API key to enter the cave</div>
                 
-                <button class="login-btn" onclick="validateKey()" id="loginBtn">
-                    Enter Cave
-                </button>
+                <div class="login-box">
+                    <input type="text" 
+                           class="key-input" 
+                           id="apiKey" 
+                           placeholder="GOB-XXXXXXXXXXXXXXXXXXXX"
+                           pattern="GOB-[A-Z0-9]{20}"
+                           title="Format: GOB- followed by 20 uppercase letters/numbers"
+                           autocomplete="off">
+                    
+                    <button class="login-btn" onclick="validateKey()" id="loginBtn">
+                        Enter Cave
+                    </button>
+                    
+                    <div class="error-box" id="errorMessage">
+                        Invalid API key
+                    </div>
+                </div>
                 
-                <div class="error-box" id="errorMessage">
-                    Invalid API key
+                <div class="divider"></div>
+                
+                <div class="info-box">
+                    <strong>How to get your API key:</strong>
+                    <p>1. Use <code>/register your_name</code> in Discord <em>(one-time only)</em></p>
+                    <p>2. Copy your <code>GOB-XXXXXXXXXXXXXXX</code> key from bot response</p>
+                    <p>3. Use <code>/key</code> to see your key anytime</p>
+                    <p>4. Enter it above to access your dashboard</p>
+                </div>
+                
+                <div class="bot-status" id="botStatus">
+                    Bot Status: Checking...
                 </div>
             </div>
             
-            <div class="divider"></div>
-            
-            <div class="info-box">
-                <strong>How to get your API key:</strong>
-                <p>1. Use <code>/register your_name</code> in Discord <em>(one-time only)</em></p>
-                <p>2. Copy your <code>GOB-XXXXXXXXXXXXXXX</code> key from bot response</p>
-                <p>3. Use <code>/key</code> to see your key anytime</p>
-                <p>4. Enter it above to access your dashboard</p>
-            </div>
-            
-            <div class="bot-status" id="botStatus">
-                Bot Status: Checking...
+            <div class="leaderboard-section">
+                <div class="leaderboard-box">
+                    <div class="leaderboard-header">
+                        <div class="leaderboard-title">🏆 Leaderboard</div>
+                        <button class="refresh-btn" onclick="loadLeaderboard()">
+                            ↻ Refresh
+                        </button>
+                    </div>
+                    
+                    <div id="leaderboardContainer">
+                        <div class="empty-leaderboard">
+                            Loading leaderboard...
+                        </div>
+                    </div>
+                    
+                    <div class="github-link">
+                        <p>Want to climb the ranks? <a href="#" onclick="downloadTool()">Download our tool</a></p>
+                    </div>
+                </div>
             </div>
         </div>
         
@@ -2030,6 +2210,81 @@ def home():
                 }
             }
             
+            async function loadLeaderboard() {
+                const container = document.getElementById('leaderboardContainer');
+                const refreshBtn = document.querySelector('.refresh-btn');
+                
+                refreshBtn.innerHTML = '↻ Loading...';
+                refreshBtn.disabled = true;
+                
+                try {
+                    const response = await fetch('/api/leaderboard');
+                    const data = await response.json();
+                    
+                    if (data.leaderboard && data.leaderboard.length > 0) {
+                        let html = '<ul class="leaderboard-list">';
+                        
+                        data.leaderboard.forEach(player => {
+                            const rankClass = `rank-${player.rank}`;
+                            
+                            html += `
+                                <li class="leaderboard-item">
+                                    <div class="rank ${rankClass}">#${player.rank}</div>
+                                    <div class="player-info">
+                                        <div class="player-name">
+                                            ${player.name}
+                                            ${player.prestige > 0 ? `<span class="prestige-badge">P${player.prestige}</span>` : ''}
+                                        </div>
+                                        <div class="player-stats">
+                                            <div class="stat">
+                                                <span class="stat-label">K/D:</span>
+                                                <span class="stat-value">${player.kd}</span>
+                                            </div>
+                                            <div class="stat">
+                                                <span class="stat-label">Kills:</span>
+                                                <span class="stat-value">${player.kills}</span>
+                                            </div>
+                                            <div class="stat">
+                                                <span class="stat-label">W/L:</span>
+                                                <span class="stat-value">${player.wins}/${player.losses}</span>
+                                            </div>
+                                        </div>
+                                    </div>
+                                </li>
+                            `;
+                        });
+                        
+                        html += '</ul>';
+                        container.innerHTML = html;
+                    } else {
+                        container.innerHTML = '<div class="empty-leaderboard">No players yet. Be the first!</div>';
+                    }
+                } catch (error) {
+                    console.error('Error loading leaderboard:', error);
+                    container.innerHTML = '<div class="empty-leaderboard">Failed to load leaderboard</div>';
+                }
+                
+                refreshBtn.innerHTML = '↻ Refresh';
+                refreshBtn.disabled = false;
+            }
+            
+            function downloadTool() {
+                // Replace with your actual GitHub release URL
+                const githubReleaseUrl = 'https://github.com/yourusername/goblin-hut-tool/releases/latest/download/tool.exe';
+                
+                // Create hidden download link
+                const link = document.createElement('a');
+                link.href = githubReleaseUrl;
+                link.download = 'goblin_hut_tool.exe';
+                link.style.display = 'none';
+                document.body.appendChild(link);
+                link.click();
+                document.body.removeChild(link);
+                
+                // Optional: Show download started message
+                alert('Download started! Check your downloads folder.');
+            }
+            
             document.getElementById('apiKey').addEventListener('keypress', function(e) {
                 if (e.key === 'Enter') validateKey();
             });
@@ -2054,6 +2309,7 @@ def home():
             document.addEventListener('DOMContentLoaded', function() {
                 document.getElementById('apiKey').focus();
                 checkBotStatus();
+                loadLeaderboard();
                 setInterval(checkBotStatus, 30000);
             });
         </script>
@@ -2582,6 +2838,10 @@ def dashboard():
                     Copy Key
                 </button>
                 
+                <button class="action-btn" onclick="downloadTool()" style="background: linear-gradient(45deg, #00ff9d, #00d4ff);">
+                    🛠️ Download Tool
+                </button>
+                
                 { '<button class="action-btn admin-btn" onclick="changeKey()">Change Key (Admin)</button>' if is_admin else '' }
             </div>
         </div>
@@ -2619,6 +2879,23 @@ def dashboard():
                     alert(data.error);
                 }}
             }});
+        }}
+        
+        function downloadTool() {{
+            // Replace with your actual GitHub release URL
+            const githubReleaseUrl = 'https://github.com/yourusername/goblin-hut-tool/releases/latest/download/goblin_hut_tool.exe';
+            
+            // Create hidden download link
+            const link = document.createElement('a');
+            link.href = githubReleaseUrl;
+            link.download = 'goblin_hut_tool.exe';
+            link.style.display = 'none';
+            document.body.appendChild(link);
+            link.click();
+            document.body.removeChild(link);
+            
+            // Show download started message
+            alert('Download started! Check your downloads folder.');
         }}
     </script>
 </body>
@@ -2702,6 +2979,39 @@ def api_stats():
         "bot_active": bot_active,
         "timestamp": datetime.utcnow().isoformat()
     })
+
+@app.route('/api/leaderboard')
+def api_leaderboard():
+    """Get leaderboard data"""
+    conn = get_db_connection()
+    
+    # Get top 10 players by K/D ratio (minimum 10 kills)
+    top_players = conn.execute('''
+        SELECT discord_name, in_game_name, total_kills, total_deaths, 
+               CAST(total_kills AS FLOAT) / MAX(total_deaths, 1) as kd_ratio,
+               wins, losses, prestige
+        FROM players 
+        WHERE total_kills >= 10
+        ORDER BY kd_ratio DESC, total_kills DESC
+        LIMIT 10
+    ''').fetchall()
+    
+    conn.close()
+    
+    leaderboard = []
+    for i, player in enumerate(top_players, 1):
+        leaderboard.append({
+            "rank": i,
+            "name": player['in_game_name'] or player['discord_name'],
+            "kills": player['total_kills'],
+            "deaths": player['total_deaths'],
+            "kd": round(player['kd_ratio'], 2),
+            "wins": player['wins'],
+            "losses": player['losses'],
+            "prestige": player['prestige']
+        })
+    
+    return jsonify({"leaderboard": leaderboard})
 
 @app.route('/health')
 def health():
@@ -2878,6 +3188,11 @@ if __name__ == '__main__':
     print(f"\nWeb Interface: http://localhost:{port}")
     print(f"Bot Endpoint: /interactions")
     
+    print("\nNew Features:")
+    print("   • Leaderboard on login screen")
+    print("   • Direct tool download from dashboard")
+    print("   • Tool download link: https://github.com/yourusername/goblin-hut-tool/releases")
+    
     print("\nDiscord Commands:")
     print("   /ping - Check bot status")
     print("   /register [name] - Get API key (one-time only)")
@@ -2899,6 +3214,8 @@ if __name__ == '__main__':
     print("   • API endpoints for external tools")
     print("   • API Key Format: GOB- + 20 uppercase alphanumeric chars")
     print("   • Database constraint: Keys must be exactly 24 characters")
+    print("   • Leaderboard showing top players by K/D ratio")
+    print("   • Direct tool download from dashboard")
     
     print("\nEnvironment Check:")
     print(f"   DISCORD_TOKEN: {'Set' if DISCORD_TOKEN else 'Not set'}")
