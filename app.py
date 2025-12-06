@@ -6,6 +6,7 @@ import random
 import string
 import time
 import requests
+import re
 from flask import Flask, request, jsonify, session, redirect, url_for, make_response
 from flask_cors import CORS
 from datetime import datetime
@@ -363,13 +364,14 @@ def close_ticket_channel(channel_id, ticket_id, closed_by):
         return False
 
 # =============================================================================
-# SECURE KEY GENERATION - FIXED LENGTH
+# SECURE KEY GENERATION
 # =============================================================================
 
 def generate_secure_key():
-    """Generate strong API key - FIXED LENGTH (24 chars total)"""
-    alphabet = string.ascii_letters + string.digits
-    key = 'GOB-' + ''.join(secrets.choice(alphabet) for _ in range(20))  # 4 + 20 = 24 chars
+    """Generate strong API key with consistent format: GOB- + 20 uppercase alphanumeric chars"""
+    alphabet = string.ascii_uppercase + string.digits  # Only uppercase and digits
+    # GOB- + 20 characters = total 24 characters
+    key = 'GOB-' + ''.join(secrets.choice(alphabet) for _ in range(20))
     return key
 
 # =============================================================================
@@ -382,14 +384,14 @@ def init_db():
         conn = sqlite3.connect(DATABASE)
         cursor = conn.cursor()
         
-        # Players table
+        # Players table with CHECK constraint for API key length
         cursor.execute('''
             CREATE TABLE IF NOT EXISTS players (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 discord_id TEXT UNIQUE,
                 discord_name TEXT,
                 in_game_name TEXT,
-                api_key TEXT UNIQUE,
+                api_key TEXT UNIQUE CHECK(LENGTH(api_key) = 24),
                 server_id TEXT,
                 key_created TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                 last_used TIMESTAMP,
@@ -435,20 +437,22 @@ def get_db_connection():
 # =============================================================================
 
 def validate_api_key(api_key):
-    """Validate API key - FIXED VERSION"""
+    """Validate API key with proper format and length checking"""
     if not api_key:
+        logger.warning("No API key provided")
         return None
     
     # Clean the API key
     api_key = api_key.strip().upper()
     
-    if not api_key.startswith("GOB-"):
+    # Validate format: GOB- followed by exactly 20 alphanumeric characters
+    pattern = r'^GOB-[A-Z0-9]{20}$'
+    
+    if not re.match(pattern, api_key):
+        logger.warning(f"Invalid API key format: {api_key} (Length: {len(api_key)})")
         return None
     
-    # Check minimum length (GOB- + 20 chars = 24 total)
-    if len(api_key) != 24:
-        logger.error(f"Invalid API key length: {len(api_key)} chars (expected 24)")
-        return None
+    logger.info(f"Validating key: {api_key}, Length: {len(api_key)}, Pattern match: OK")
     
     conn = get_db_connection()
     try:
@@ -467,16 +471,65 @@ def validate_api_key(api_key):
             
             # Convert to dict for session storage
             player_dict = {key: player[key] for key in player.keys()}
-            logger.info(f"Validated API key for user: {player['in_game_name']}")
+            logger.info(f"API key validated successfully for user: {player_dict.get('in_game_name')}")
             return player_dict
         else:
-            logger.error(f"No player found for API key: {api_key}")
+            logger.warning(f"API key not found in database: {api_key}")
             return None
     except Exception as e:
         logger.error(f"Error validating API key: {e}")
         return None
     finally:
         conn.close()
+
+def fix_existing_keys():
+    """Fix existing keys to correct format"""
+    conn = get_db_connection()
+    players = conn.execute('SELECT id, api_key FROM players').fetchall()
+    
+    fixed_count = 0
+    for player in players:
+        old_key = player['api_key']
+        if old_key and (not old_key.startswith('GOB-') or len(old_key) != 24):
+            new_key = generate_secure_key()
+            logger.info(f"Fixing key for player {player['id']}: {old_key} -> {new_key}")
+            conn.execute('UPDATE players SET api_key = ? WHERE id = ?', 
+                       (new_key, player['id']))
+            fixed_count += 1
+    
+    if fixed_count > 0:
+        conn.commit()
+        logger.info(f"Fixed {fixed_count} API keys")
+    
+    conn.close()
+    return fixed_count
+
+def test_key_validation():
+    """Test key validation for debugging"""
+    test_keys = [
+        "GOB-ABCDEFGHIJKLMNOPQRST",  # Valid - 20 chars after GOB-
+        "GOB-ABCDEFGHIJKLMNOPQRS",    # Invalid - 19 chars
+        "GOB-ABCDEFGHIJKLMNOPQRSTU",  # Invalid - 21 chars
+        "gob-ABCDEFGHIJKLMNOPQRST",   # Valid after uppercase conversion
+        "GOB-ABCDEFGHIJKLMNOPQR",     # Invalid - 18 chars
+        "GOB-1234567890ABCDEFGHIJ",   # Valid - mix of numbers and letters
+        "WRONG-ABCDEFGHIJKLMNOPQR",   # Invalid prefix
+        "GOB-ABCDEFGHIJKLMNOPQRSTUVWXYZ",  # Too long
+        "GOB-ABCDEFGHIJ1234567890",   # Valid - numbers
+        "",                           # Empty
+        None,                         # None
+    ]
+    
+    print("\n" + "="*60)
+    print("API KEY VALIDATION TEST")
+    print("="*60)
+    
+    for key in test_keys:
+        result = validate_api_key(key)
+        length = len(key) if key else 0
+        print(f"Key: {str(key):40} Length: {length:2} Valid: {bool(result)}")
+    
+    print("="*60 + "\n")
 
 # =============================================================================
 # DISCORD BOT FUNCTIONS
@@ -741,9 +794,6 @@ def interactions():
             is_admin = is_user_admin_in_guild(server_id, user_id)
             api_key = generate_secure_key()
             
-            # Log full API key for debugging
-            logger.info(f"Generated API key for {user_name}: {api_key}")
-            
             # Insert new player
             conn.execute('''
                 INSERT INTO players 
@@ -755,7 +805,7 @@ def interactions():
             conn.close()
             
             admin_note = "\n**Admin access detected** - You have additional privileges." if is_admin else ""
-            logger.info(f"User {user_name} registered successfully")
+            logger.info(f"User {user_name} registered successfully with key {api_key}")
             
             return jsonify({
                 "type": 4,
@@ -1038,7 +1088,7 @@ def before_request():
             session['user_data'] = user_data
 
 # =============================================================================
-# WEB INTERFACE
+# WEB INTERFACE WITH SUBTLE ANIMATIONS
 # =============================================================================
 
 @app.route('/')
@@ -1069,6 +1119,26 @@ def home():
                 background: #0a0015;
                 color: #fff;
                 min-height: 100vh;
+                overflow-x: hidden;
+            }
+            
+            .background-glow {
+                position: fixed;
+                width: 500px;
+                height: 500px;
+                border-radius: 50%;
+                background: radial-gradient(circle, rgba(157, 0, 255, 0.1) 0%, transparent 70%);
+                filter: blur(60px);
+                animation: float 20s infinite linear;
+                z-index: -1;
+            }
+            
+            @keyframes float {
+                0% { transform: translate(0, 0) rotate(0deg); }
+                25% { transform: translate(100px, 100px) rotate(90deg); }
+                50% { transform: translate(0, 200px) rotate(180deg); }
+                75% { transform: translate(-100px, 100px) rotate(270deg); }
+                100% { transform: translate(0, 0) rotate(360deg); }
             }
             
             .container {
@@ -1076,41 +1146,61 @@ def home():
                 margin: 0 auto;
                 padding: 40px 20px;
                 text-align: center;
+                position: relative;
+                z-index: 1;
             }
             
             .logo {
                 font-size: 4rem;
-                font-weight: bold;
+                font-weight: 900;
                 margin-bottom: 10px;
-                color: #9d00ff;
+                background: linear-gradient(45deg, #9d00ff, #00d4ff);
+                -webkit-background-clip: text;
+                -webkit-text-fill-color: transparent;
                 letter-spacing: 2px;
                 font-family: 'Arial Black', sans-serif;
+                text-shadow: 0 0 20px rgba(157, 0, 255, 0.3);
             }
             
             .subtitle {
                 font-size: 1.3rem;
                 color: #b19cd9;
                 margin-bottom: 40px;
+                animation: fadeIn 1.5s ease-out;
                 font-weight: 300;
             }
             
+            @keyframes fadeIn {
+                from { opacity: 0; transform: translateY(20px); }
+                to { opacity: 1; transform: translateY(0); }
+            }
+            
             .login-box {
-                background: rgba(20, 10, 40, 0.9);
-                border-radius: 15px;
+                background: rgba(20, 10, 40, 0.8);
+                backdrop-filter: blur(10px);
+                border-radius: 20px;
                 padding: 40px;
-                border: 1px solid #9d00ff;
+                border: 1px solid rgba(157, 0, 255, 0.2);
+                box-shadow: 0 10px 30px rgba(0, 0, 0, 0.3);
+                animation: slideUp 0.8s ease-out;
+            }
+            
+            @keyframes slideUp {
+                from { opacity: 0; transform: translateY(30px); }
+                to { opacity: 1; transform: translateY(0); }
             }
             
             .key-input {
                 width: 100%;
                 padding: 18px;
-                background: rgba(0, 0, 0, 0.6);
+                background: rgba(0, 0, 0, 0.5);
                 border: 2px solid #9d00ff;
                 border-radius: 12px;
                 color: #fff;
                 font-size: 16px;
                 text-align: center;
                 margin-bottom: 25px;
+                transition: all 0.3s;
                 font-family: monospace;
                 letter-spacing: 1px;
             }
@@ -1118,47 +1208,72 @@ def home():
             .key-input:focus {
                 outline: none;
                 border-color: #00d4ff;
+                box-shadow: 0 0 15px rgba(0, 212, 255, 0.3);
+                transform: scale(1.02);
             }
             
             .login-btn {
                 width: 100%;
                 padding: 18px;
-                background: #9d00ff;
+                background: linear-gradient(45deg, #9d00ff, #00d4ff);
                 color: white;
                 border: none;
                 border-radius: 12px;
                 font-size: 16px;
                 font-weight: bold;
                 cursor: pointer;
+                transition: all 0.3s;
+                position: relative;
+                overflow: hidden;
             }
             
             .login-btn:hover {
-                background: #ff00ff;
+                transform: translateY(-3px);
+                box-shadow: 0 10px 20px rgba(157, 0, 255, 0.3);
+            }
+            
+            .login-btn:active {
+                transform: translateY(-1px);
             }
             
             .login-btn:disabled {
                 opacity: 0.7;
                 cursor: not-allowed;
+                transform: none !important;
             }
             
             .error-box {
                 background: rgba(255, 0, 0, 0.1);
-                border: 1px solid #ff0000;
+                border: 1px solid rgba(255, 0, 0, 0.3);
                 border-radius: 10px;
                 padding: 15px;
                 margin-top: 20px;
                 color: #ff6b6b;
                 display: none;
+                animation: shake 0.5s;
+            }
+            
+            @keyframes shake {
+                0%, 100% { transform: translateX(0); }
+                25% { transform: translateX(-5px); }
+                75% { transform: translateX(5px); }
             }
             
             .info-box {
-                background: rgba(30, 15, 60, 0.9);
-                border: 1px solid #9d00ff;
+                background: rgba(30, 15, 60, 0.8);
+                border: 1px solid rgba(157, 0, 255, 0.2);
                 border-radius: 15px;
                 padding: 25px;
                 margin-top: 30px;
                 text-align: left;
                 color: #d4b3ff;
+                backdrop-filter: blur(10px);
+                animation: fadeInDelay 1s ease-out 0.5s both;
+            }
+            
+            @keyframes fadeInDelay {
+                from { opacity: 0; transform: translateY(20px); }
+                to { opacity: 1; transform: translateY(0); }
             }
             
             .info-box strong {
@@ -1174,46 +1289,69 @@ def home():
                 border-radius: 5px;
                 font-family: 'Courier New', monospace;
                 color: #9d00ff;
+                margin: 0 2px;
             }
             
             .bot-status {
                 padding: 12px 25px;
-                background: rgba(30, 15, 60, 0.9);
-                border: 1px solid #9d00ff;
+                background: rgba(30, 15, 60, 0.8);
+                border: 1px solid rgba(157, 0, 255, 0.3);
                 border-radius: 25px;
                 margin-top: 30px;
                 display: inline-block;
                 font-weight: 600;
                 font-size: 1rem;
+                backdrop-filter: blur(10px);
+                animation: pulse 2s infinite;
+            }
+            
+            @keyframes pulse {
+                0%, 100% { box-shadow: 0 5px 15px rgba(0, 0, 0, 0.2); }
+                50% { box-shadow: 0 5px 20px rgba(157, 0, 255, 0.2); }
             }
             
             .status-online {
                 color: #00ff9d;
-                border-color: #00ff9d;
+                border-color: rgba(0, 255, 157, 0.3);
             }
             
             .status-offline {
                 color: #ff6b6b;
-                border-color: #ff6b6b;
+                border-color: rgba(255, 107, 107, 0.3);
+            }
+            
+            .divider {
+                height: 1px;
+                background: linear-gradient(90deg, transparent, #9d00ff, transparent);
+                margin: 30px 0;
+                width: 100%;
             }
             
             @media (max-width: 768px) {
                 .container { padding: 20px; }
                 .logo { font-size: 3rem; }
                 .login-box { padding: 30px 20px; }
+                .key-input { padding: 15px; }
+                .login-btn { padding: 15px; }
             }
         </style>
     </head>
     <body>
+        <div class="background-glow" style="top: 10%; left: 10%; animation-delay: 0s;"></div>
+        <div class="background-glow" style="top: 60%; right: 10%; animation-delay: -5s; background: radial-gradient(circle, rgba(0, 212, 255, 0.08) 0%, transparent 70%);"></div>
+        <div class="background-glow" style="bottom: 20%; left: 20%; animation-delay: -10s; background: radial-gradient(circle, rgba(157, 0, 255, 0.08) 0%, transparent 70%);"></div>
+        
         <div class="container">
             <div class="logo">GOBLIN HUT</div>
             <div class="subtitle">Enter your API key to enter the cave</div>
             
             <div class="login-box">
-                <input type="password" 
+                <input type="text" 
                        class="key-input" 
                        id="apiKey" 
                        placeholder="GOB-XXXXXXXXXXXXXXXXXXXX"
+                       pattern="GOB-[A-Z0-9]{20}"
+                       title="Format: GOB- followed by 20 uppercase letters/numbers"
                        autocomplete="off">
                 
                 <button class="login-btn" onclick="validateKey()" id="loginBtn">
@@ -1224,6 +1362,8 @@ def home():
                     Invalid API key
                 </div>
             </div>
+            
+            <div class="divider"></div>
             
             <div class="info-box">
                 <strong>How to get your API key:</strong>
@@ -1244,20 +1384,17 @@ def home():
                 const errorDiv = document.getElementById('errorMessage');
                 const btn = document.getElementById('loginBtn');
                 
+                // Frontend format validation
+                const keyPattern = /^GOB-[A-Z0-9]{20}$/;
+                
                 if (!key) {
                     errorDiv.textContent = "Please enter an API key";
                     errorDiv.style.display = 'block';
                     return;
                 }
                 
-                if (!key.startsWith('GOB-')) {
-                    errorDiv.textContent = "Key must start with GOB-";
-                    errorDiv.style.display = 'block';
-                    return;
-                }
-                
-                if (key.length !== 24) {
-                    errorDiv.textContent = "Key must be 24 characters long (GOB- + 20 chars)";
+                if (!keyPattern.test(key)) {
+                    errorDiv.textContent = "Invalid format. Key must be: GOB- followed by 20 uppercase letters/numbers";
                     errorDiv.style.display = 'block';
                     return;
                 }
@@ -1276,6 +1413,7 @@ def home():
                     
                     if (data.valid) {
                         btn.innerHTML = 'Access granted!';
+                        btn.style.background = 'linear-gradient(45deg, #00ff9d, #00d4ff)';
                         setTimeout(() => window.location.href = '/dashboard', 500);
                     } else {
                         errorDiv.textContent = data.error || 'Invalid API key';
@@ -1331,14 +1469,6 @@ def api_validate_key():
     if not api_key:
         return jsonify({"valid": False, "error": "No key provided"})
     
-    # Validate format
-    if not api_key.startswith('GOB-'):
-        return jsonify({"valid": False, "error": "Key must start with GOB-"})
-    
-    if len(api_key) != 24:
-        logger.error(f"Invalid key length: {len(api_key)} chars for key: {api_key}")
-        return jsonify({"valid": False, "error": "Invalid key length (must be 24 characters)"})
-    
     user_data = validate_api_key(api_key)
     
     if user_data:
@@ -1348,10 +1478,8 @@ def api_validate_key():
         session.permanent = True
         session.modified = True
         
-        logger.info(f"API key validated successfully for user: {user_data.get('in_game_name')}")
         return jsonify({"valid": True, "user": user_data.get('in_game_name')})
     else:
-        logger.error(f"API key validation failed for key: {api_key}")
         return jsonify({"valid": False, "error": "Invalid API key"})
 
 @app.route('/logout')
@@ -1403,7 +1531,25 @@ def dashboard():
     
     is_admin = user_data.get('is_admin', 0)
     
-    # Simple dashboard HTML
+    # Get open tickets for this user
+    conn = get_db_connection()
+    tickets = conn.execute(
+        'SELECT * FROM tickets WHERE discord_id = ? AND status = "open" ORDER BY created_at DESC LIMIT 3',
+        (user_data['discord_id'],)
+    ).fetchall()
+    conn.close()
+    
+    # Build tickets HTML
+    tickets_html = ''
+    for ticket in tickets:
+        category_info = next((c for c in TICKET_CATEGORIES if c["name"] == ticket['category']), TICKET_CATEGORIES[-1])
+        color_hex = f"#{hex(category_info['color'])[2:].zfill(6)}"
+        tickets_html += f'<div class="ticket-card"><div class="ticket-header"><div class="ticket-title"><strong>TICKET-{ticket["ticket_id"]}</strong></div><span class="status-open">OPEN</span></div><p class="ticket-issue">{ticket["issue"][:100]}...</p><div class="ticket-footer"><span class="ticket-category" style="color: {color_hex};">{ticket["category"]}</span><span class="ticket-date">{ticket["created_at"][:10]}</span></div></div>'
+    
+    if not tickets_html:
+        tickets_html = '<div class="no-tickets"><p>No open tickets</p></div>'
+    
+    # Build the HTML response
     html = f'''<!DOCTYPE html>
 <html>
 <head>
@@ -1418,25 +1564,51 @@ def dashboard():
         }}
         
         body {{
-            font-family: Arial, sans-serif;
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
             background: #0a0015;
             color: #fff;
             min-height: 100vh;
+            overflow-x: hidden;
+        }}
+        
+        .background-glow {{
+            position: fixed;
+            width: 600px;
+            height: 600px;
+            border-radius: 50%;
+            background: radial-gradient(circle, rgba(157, 0, 255, 0.08) 0%, transparent 70%);
+            filter: blur(80px);
+            animation: float 25s infinite linear;
+            z-index: -1;
+        }}
+        
+        @keyframes float {{
+            0% {{ transform: translate(0, 0) rotate(0deg); }}
+            33% {{ transform: translate(200px, 200px) rotate(120deg); }}
+            66% {{ transform: translate(-200px, 100px) rotate(240deg); }}
+            100% {{ transform: translate(0, 0) rotate(360deg); }}
         }}
         
         .header {{
-            background: #0f051e;
-            border-bottom: 1px solid #9d00ff;
-            padding: 20px 40px;
+            background: rgba(15, 5, 30, 0.9);
+            backdrop-filter: blur(10px);
+            border-bottom: 1px solid rgba(157, 0, 255, 0.3);
+            padding: 25px 50px;
             display: flex;
             justify-content: space-between;
             align-items: center;
+            position: sticky;
+            top: 0;
+            z-index: 100;
         }}
         
         .logo {{
-            font-size: 1.8rem;
-            font-weight: bold;
-            color: #9d00ff;
+            font-size: 2rem;
+            font-weight: 900;
+            background: linear-gradient(45deg, #9d00ff, #00d4ff);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            font-family: 'Arial Black', sans-serif;
         }}
         
         .user-info {{
@@ -1446,35 +1618,37 @@ def dashboard():
         }}
         
         .user-name {{
-            font-size: 1.2rem;
+            font-size: 1.3rem;
             color: #00d4ff;
             font-weight: bold;
         }}
         
         .logout-btn {{
-            padding: 10px 20px;
-            background: #ff416c;
+            padding: 10px 25px;
+            background: linear-gradient(45deg, #ff416c, #ff4b2b);
             color: white;
             border: none;
             border-radius: 10px;
             font-weight: bold;
             cursor: pointer;
             text-decoration: none;
+            transition: all 0.3s;
         }}
         
         .logout-btn:hover {{
-            background: #ff4b2b;
+            transform: translateY(-3px);
+            box-shadow: 0 5px 15px rgba(255, 65, 108, 0.3);
         }}
         
         .container {{
             max-width: 1200px;
             margin: 0 auto;
-            padding: 30px;
+            padding: 40px;
         }}
         
         .profile-section {{
             display: grid;
-            grid-template-columns: 1fr 350px;
+            grid-template-columns: 1fr 400px;
             gap: 30px;
             margin-bottom: 40px;
         }}
@@ -1486,37 +1660,62 @@ def dashboard():
         }}
         
         .profile-card, .key-card {{
-            background: #190a32;
-            border-radius: 15px;
-            padding: 30px;
-            border: 1px solid #9d00ff;
+            background: rgba(25, 10, 50, 0.8);
+            backdrop-filter: blur(10px);
+            border-radius: 20px;
+            padding: 40px;
+            border: 1px solid rgba(157, 0, 255, 0.2);
+            box-shadow: 0 10px 30px rgba(0, 0, 0, 0.2);
+            animation: slideUp 0.8s ease-out;
+        }}
+        
+        .key-card {{
+            animation-delay: 0.2s;
+        }}
+        
+        @keyframes slideUp {{
+            from {{ opacity: 0; transform: translateY(30px); }}
+            to {{ opacity: 1; transform: translateY(0); }}
         }}
         
         .profile-header {{
             display: flex;
             align-items: center;
-            gap: 20px;
+            gap: 25px;
             margin-bottom: 30px;
-            padding-bottom: 20px;
-            border-bottom: 1px solid #9d00ff;
+            padding-bottom: 25px;
+            border-bottom: 1px solid rgba(157, 0, 255, 0.3);
         }}
         
         .avatar {{
-            width: 80px;
-            height: 80px;
-            background: #9d00ff;
+            width: 100px;
+            height: 100px;
+            background: linear-gradient(45deg, #9d00ff, #00d4ff);
             border-radius: 50%;
             display: flex;
             align-items: center;
             justify-content: center;
-            font-size: 2rem;
+            font-size: 2.5rem;
             color: white;
+            animation: rotate 20s linear infinite;
+        }}
+        
+        @keyframes rotate {{
+            from {{ transform: rotate(0deg); }}
+            to {{ transform: rotate(360deg); }}
         }}
         
         .profile-info h2 {{
-            font-size: 2rem;
+            font-size: 2.2rem;
             margin-bottom: 5px;
-            color: #9d00ff;
+            background: linear-gradient(45deg, #9d00ff, #00d4ff);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+        }}
+        
+        .profile-info p {{
+            color: #b19cd9;
+            font-size: 1rem;
         }}
         
         .stats-grid {{
@@ -1529,49 +1728,149 @@ def dashboard():
         .stat-item {{
             background: rgba(0, 0, 0, 0.4);
             border-radius: 15px;
-            padding: 20px;
+            padding: 25px;
             text-align: center;
-            border: 1px solid #9d00ff;
+            border: 1px solid rgba(157, 0, 255, 0.2);
+            transition: all 0.3s;
+        }}
+        
+        .stat-item:hover {{
+            transform: translateY(-5px);
+            border-color: rgba(0, 212, 255, 0.4);
+            box-shadow: 0 10px 20px rgba(0, 212, 255, 0.1);
         }}
         
         .stat-value {{
             font-size: 2.5rem;
-            font-weight: bold;
+            font-weight: 900;
             margin: 10px 0;
+            font-family: 'Arial Black', sans-serif;
         }}
         
         .stat-label {{
             color: #b19cd9;
             font-size: 0.9rem;
+            text-transform: uppercase;
+            letter-spacing: 1px;
+            margin-bottom: 5px;
         }}
         
         .key-display {{
-            background: rgba(0, 0, 0, 0.6);
-            border: 1px solid #9d00ff;
+            background: rgba(0, 0, 0, 0.5);
+            border: 1px solid rgba(157, 0, 255, 0.4);
             border-radius: 15px;
-            padding: 20px;
-            margin: 20px 0;
+            padding: 25px;
+            margin: 25px 0;
             font-family: 'Courier New', monospace;
             color: #00ff9d;
             text-align: center;
             cursor: pointer;
             word-break: break-all;
+            transition: all 0.3s;
+        }}
+        
+        .key-display:hover {{
+            border-color: rgba(0, 212, 255, 0.6);
+            box-shadow: 0 0 15px rgba(0, 212, 255, 0.2);
         }}
         
         .action-btn {{
             width: 100%;
-            padding: 15px;
-            background: #9d00ff;
+            padding: 16px;
+            background: linear-gradient(45deg, #9d00ff, #00d4ff);
             color: white;
             border: none;
-            border-radius: 10px;
+            border-radius: 12px;
             font-weight: bold;
             cursor: pointer;
             margin: 10px 0;
+            transition: all 0.3s;
         }}
         
         .action-btn:hover {{
-            background: #ff00ff;
+            transform: translateY(-3px);
+            box-shadow: 0 10px 20px rgba(157, 0, 255, 0.2);
+        }}
+        
+        .admin-btn {{
+            background: linear-gradient(45deg, #00ff9d, #00d4ff);
+        }}
+        
+        .tickets-section {{
+            background: rgba(25, 10, 50, 0.8);
+            backdrop-filter: blur(10px);
+            border-radius: 20px;
+            padding: 40px;
+            border: 1px solid rgba(157, 0, 255, 0.2);
+            box-shadow: 0 10px 30px rgba(0, 0, 0, 0.2);
+            animation: slideUp 0.8s ease-out 0.4s both;
+        }}
+        
+        .tickets-section h3 {{
+            font-size: 1.8rem;
+            margin-bottom: 30px;
+            color: #00d4ff;
+        }}
+        
+        .tickets-grid {{
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+            gap: 20px;
+        }}
+        
+        .ticket-card {{
+            background: rgba(20, 5, 40, 0.9);
+            border-radius: 15px;
+            padding: 25px;
+            border: 1px solid rgba(157, 0, 255, 0.2);
+            transition: all 0.3s;
+        }}
+        
+        .ticket-card:hover {{
+            transform: translateY(-5px);
+            border-color: rgba(0, 212, 255, 0.4);
+            box-shadow: 0 10px 20px rgba(0, 212, 255, 0.1);
+        }}
+        
+        .ticket-header {{
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 15px;
+        }}
+        
+        .status-open {{
+            color: #00ff9d;
+            font-weight: bold;
+            font-size: 0.8rem;
+            padding: 5px 12px;
+            background: rgba(0, 255, 157, 0.1);
+            border-radius: 15px;
+        }}
+        
+        .ticket-issue {{
+            color: #d4b3ff;
+            margin-bottom: 20px;
+            font-size: 1rem;
+            line-height: 1.5;
+        }}
+        
+        .ticket-footer {{
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            color: #888;
+            font-size: 0.9rem;
+        }}
+        
+        .ticket-category {{
+            font-weight: bold;
+        }}
+        
+        .no-tickets {{
+            text-align: center;
+            padding: 40px;
+            color: #666;
         }}
         
         @media (max-width: 768px) {{
@@ -1579,21 +1878,39 @@ def dashboard():
                 flex-direction: column;
                 gap: 15px;
                 text-align: center;
-                padding: 15px;
+                padding: 20px;
             }}
             .container {{
-                padding: 15px;
+                padding: 20px;
             }}
-            .profile-card, .key-card {{
-                padding: 20px 15px;
+            .profile-section {{
+                gap: 20px;
+            }}
+            .profile-card, .key-card, .tickets-section {{
+                padding: 25px 20px;
             }}
             .stats-grid {{
                 grid-template-columns: 1fr;
+            }}
+            .tickets-grid {{
+                grid-template-columns: 1fr;
+            }}
+            .avatar {{
+                width: 80px;
+                height: 80px;
+                font-size: 2rem;
+            }}
+            .profile-info h2 {{
+                font-size: 1.8rem;
             }}
         }}
     </style>
 </head>
 <body>
+    <div class="background-glow" style="top: 10%; left: 5%; animation-delay: 0s;"></div>
+    <div class="background-glow" style="top: 60%; right: 5%; animation-delay: -8s; background: radial-gradient(circle, rgba(0, 212, 255, 0.06) 0%, transparent 70%);"></div>
+    <div class="background-glow" style="bottom: 10%; left: 30%; animation-delay: -16s; background: radial-gradient(circle, rgba(157, 0, 255, 0.06) 0%, transparent 70%);"></div>
+    
     <div class="header">
         <div class="logo">GOBLIN HUT</div>
         <div class="user-info">
@@ -1611,7 +1928,7 @@ def dashboard():
                     </div>
                     <div class="profile-info">
                         <h2>{user_data.get('in_game_name', 'Player')}</h2>
-                        <p style="color: #b19cd9;">Joined on {created_str} • {total_games} games</p>
+                        <p>Member for {days_ago} days • {total_games} games • Prestige {user_data.get('prestige', 0)}</p>
                     </div>
                 </div>
                 
@@ -1631,21 +1948,25 @@ def dashboard():
                     <div class="stat-item">
                         <div class="stat-label">Games Played</div>
                         <div class="stat-value" style="color: #9d00ff;">{total_games}</div>
-                        <div style="color: #d4b3ff; font-size: 0.8rem;">Total matches</div>
+                        <div style="color: #d4b3ff; font-size: 0.8rem;">Total matches completed</div>
                     </div>
                     
                     <div class="stat-item">
                         <div class="stat-label">Prestige Level</div>
                         <div class="stat-value" style="color: #ffd700;">{user_data.get('prestige', 0)}</div>
-                        <div style="color: #d4b3ff; font-size: 0.8rem;">Current rank</div>
+                        <div style="color: #d4b3ff; font-size: 0.8rem;">Current prestige rank</div>
                     </div>
                 </div>
             </div>
             
             <div class="key-card">
                 <h3 style="color: #00d4ff; margin-bottom: 20px;">Your API Key</h3>
+                <p style="color: #b19cd9; margin-bottom: 20px; line-height: 1.5;">
+                    Keep this key secure. Use it to access your dashboard and API features.
+                    Do not share it with anyone.
+                </p>
                 
-                <div class="key-display" onclick="this.classList.add('revealed')">
+                <div class="key-display" id="apiKeyDisplay" onclick="this.classList.add('revealed')">
                     {session['user_key']}
                 </div>
                 
@@ -1657,7 +1978,14 @@ def dashboard():
                     Create Ticket
                 </button>
                 
-                { '<button class="action-btn" onclick="changeKey()" style="background: #00ff9d;">Change Key (Admin)</button>' if is_admin else '' }
+                { '<button class="action-btn admin-btn" onclick="changeKey()">Change Key (Admin)</button>' if is_admin else '' }
+            </div>
+        </div>
+        
+        <div class="tickets-section">
+            <h3>Your Open Tickets</h3>
+            <div class="tickets-grid">
+                {tickets_html}
             </div>
         </div>
     </div>
@@ -1792,6 +2120,14 @@ def health():
 if __name__ == '__main__':
     init_db()
     
+    # Fix any existing keys that don't match the correct format
+    fixed_keys = fix_existing_keys()
+    if fixed_keys > 0:
+        print(f"Fixed {fixed_keys} API keys to correct format")
+    
+    # Run validation test
+    test_key_validation()
+    
     print("\n" + "="*60)
     print("GOBLIN HUT BOT")
     print("="*60)
@@ -1812,24 +2148,33 @@ if __name__ == '__main__':
     
     print("\nDiscord Commands:")
     print("   /ping - Check bot status")
-    print("   /register [name] - Get API key (one-time only, 24 chars)")
+    print("   /register [name] - Get API key (one-time only)")
     print("   /profile - Show your profile and stats")
     print("   /key - Show your API key")
     print("   /ticket [issue] [category] - Create support ticket")
     print("   /close - Close current ticket")
     
-    print("\nAPI Key Format:")
-    print("   Format: GOB-XXXXXXXXXXXXXXXXXXXX")
-    print("   Length: 24 characters total (GOB- + 20 chars)")
-    print("   Characters: Letters and numbers only")
+    print("\nKey Features:")
+    print("   • API Key Format: GOB- + 20 uppercase alphanumeric chars")
+    print("   • Database constraint: Keys must be exactly 24 characters")
+    print("   • Frontend and backend format validation")
+    print("   • One-time registration only")
+    print("   • Fixed API key validation with regex pattern")
+    print("   • Working profile command")
+    print("   • Subtle web animations")
+    print("   • Goblin Hut theme")
     
     print("\nEnvironment Check:")
     print(f"   DISCORD_TOKEN: {'Set' if DISCORD_TOKEN else 'Not set'}")
     print(f"   DISCORD_CLIENT_ID: {'Set' if DISCORD_CLIENT_ID else 'Not set'}")
     print(f"   DISCORD_PUBLIC_KEY: {'Set' if DISCORD_PUBLIC_KEY else 'Not set'}")
     
-    print("\nInstall required library:")
-    print("   pip install pynacl")
+    print("\nTroubleshooting:")
+    print("   1. Install required libraries: pip install pynacl requests flask flask-cors")
+    print("   2. Set all Discord environment variables")
+    print("   3. Check bot has proper permissions")
+    print("   4. View logs for detailed errors")
+    print("   5. Run key validation test: test_key_validation()")
     
     print("\n" + "="*60 + "\n")
     
