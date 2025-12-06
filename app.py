@@ -7,6 +7,7 @@ import string
 import time
 import requests
 import re
+import threading
 from flask import Flask, request, jsonify, session, redirect, url_for, make_response
 from flask_cors import CORS
 from datetime import datetime
@@ -34,6 +35,9 @@ MOD_ROLE_ID = os.environ.get('MOD_ROLE_ID', '')
 
 # Webhook for ticket notifications (optional)
 TICKET_WEBHOOK = os.environ.get('TICKET_WEBHOOK', '')
+
+# Webhook for score tracking
+SCORE_WEBHOOK = os.environ.get('SCORE_WEBHOOK', '')
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -93,6 +97,32 @@ TICKET_CATEGORIES = [
     {"name": "Technical Support", "emoji": "", "color": 0xf39c12},
     {"name": "Other", "emoji": "", "color": 0x9b59b6}
 ]
+
+# Score tracking
+score_matches = {}  # Store ongoing matches: {match_id: {team1: {players: [], score: 0}, team2: {players: [], score: 0}}}
+
+# =============================================================================
+# SERVER PING - KEEP ALIVE
+# =============================================================================
+
+def ping_server():
+    """Ping the server every 5 minutes to keep it alive"""
+    try:
+        response = requests.get(f"http://localhost:{port}/health", timeout=10)
+        logger.info(f"Server ping response: {response.status_code}")
+    except Exception as e:
+        logger.error(f"Server ping failed: {e}")
+
+def start_ping_scheduler():
+    """Start the ping scheduler"""
+    def scheduler():
+        while True:
+            time.sleep(300)  # 5 minutes
+            ping_server()
+    
+    thread = threading.Thread(target=scheduler, daemon=True)
+    thread.start()
+    logger.info("Server ping scheduler started")
 
 # =============================================================================
 # DISCORD API HELPERS
@@ -154,6 +184,16 @@ def create_channel_invite(channel_id, max_age=0):
     """Create channel invite"""
     data = {"max_age": max_age, "max_uses": 0, "temporary": False}
     return discord_api_request(f"/channels/{channel_id}/invites", "POST", data)
+
+def get_discord_user(user_id):
+    """Get Discord user info including avatar"""
+    return discord_api_request(f"/users/{user_id}")
+
+def get_discord_avatar_url(user_id, avatar_hash, size=256):
+    """Get Discord avatar URL"""
+    if not avatar_hash:
+        return None
+    return f"https://cdn.discordapp.com/avatars/{user_id}/{avatar_hash}.png?size={size}"
 
 def is_user_admin_in_guild(guild_id, user_id):
     """Check if user has admin/manage permissions in guild"""
@@ -224,6 +264,123 @@ def send_ticket_webhook(ticket_id, user_name, user_id, category, issue, channel_
     except Exception as e:
         logger.error(f"Webhook error: {e}")
 
+def send_score_update(match_id, team1_score, team2_score, team1_players, team2_players):
+    """Send score update to webhook"""
+    if not SCORE_WEBHOOK:
+        return
+    
+    try:
+        embed = {
+            "title": "🏆 Score Update",
+            "description": f"Match ID: `{match_id}`",
+            "color": 0x00ff9d,
+            "fields": [
+                {
+                    "name": "Team 1",
+                    "value": f"Score: **{team1_score}**\nPlayers: {', '.join(team1_players)}",
+                    "inline": True
+                },
+                {
+                    "name": "Team 2",
+                    "value": f"Score: **{team2_score}**\nPlayers: {', '.join(team2_players)}",
+                    "inline": True
+                }
+            ],
+            "timestamp": datetime.utcnow().isoformat(),
+            "footer": {"text": "Goblin Hut Score Tracker"}
+        }
+        
+        data = {
+            "embeds": [embed],
+            "username": "Goblin Hut Score Tracker",
+            "avatar_url": "https://i.imgur.com/Lg9YqZm.png"
+        }
+        
+        response = requests.post(SCORE_WEBHOOK, json=data, timeout=5)
+        if response.status_code not in [200, 204]:
+            logger.error(f"Score webhook failed: {response.status_code}")
+            
+    except Exception as e:
+        logger.error(f"Score webhook error: {e}")
+
+def send_match_start(match_id, team1_players, team2_players):
+    """Send match start notification"""
+    if not SCORE_WEBHOOK:
+        return
+    
+    try:
+        embed = {
+            "title": "🎮 Match Started",
+            "description": f"Match ID: `{match_id}`",
+            "color": 0x9d00ff,
+            "fields": [
+                {
+                    "name": "Team 1",
+                    "value": f"Players: {', '.join(team1_players)}",
+                    "inline": True
+                },
+                {
+                    "name": "Team 2",
+                    "value": f"Players: {', '.join(team2_players)}",
+                    "inline": True
+                }
+            ],
+            "timestamp": datetime.utcnow().isoformat(),
+            "footer": {"text": "Goblin Hut Score Tracker"}
+        }
+        
+        data = {
+            "embeds": [embed],
+            "username": "Goblin Hut Score Tracker",
+            "avatar_url": "https://i.imgur.com/Lg9YqZm.png"
+        }
+        
+        response = requests.post(SCORE_WEBHOOK, json=data, timeout=5)
+        if response.status_code not in [200, 204]:
+            logger.error(f"Match start webhook failed: {response.status_code}")
+            
+    except Exception as e:
+        logger.error(f"Match start webhook error: {e}")
+
+def send_match_end(match_id, winner_team, team1_score, team2_score, team1_players, team2_players):
+    """Send match end notification"""
+    if not SCORE_WEBHOOK:
+        return
+    
+    try:
+        embed = {
+            "title": "🏁 Match Ended",
+            "description": f"Match ID: `{match_id}`\n**Winner: {winner_team}**",
+            "color": 0xffd700,
+            "fields": [
+                {
+                    "name": "Team 1",
+                    "value": f"Score: **{team1_score}**\nPlayers: {', '.join(team1_players)}",
+                    "inline": True
+                },
+                {
+                    "name": "Team 2",
+                    "value": f"Score: **{team2_score}**\nPlayers: {', '.join(team2_players)}",
+                    "inline": True
+                }
+            ],
+            "timestamp": datetime.utcnow().isoformat(),
+            "footer": {"text": "Goblin Hut Score Tracker"}
+        }
+        
+        data = {
+            "embeds": [embed],
+            "username": "Goblin Hut Score Tracker",
+            "avatar_url": "https://i.imgur.com/Lg9YqZm.png"
+        }
+        
+        response = requests.post(SCORE_WEBHOOK, json=data, timeout=5)
+        if response.status_code not in [200, 204]:
+            logger.error(f"Match end webhook failed: {response.status_code}")
+            
+    except Exception as e:
+        logger.error(f"Match end webhook error: {e}")
+
 # =============================================================================
 # TICKET SYSTEM
 # =============================================================================
@@ -270,9 +427,17 @@ def create_ticket_channel(guild_id, user_id, user_name, ticket_id, issue, catego
             channel_data["permission_overwrites"].append({
                 "id": MOD_ROLE_ID,
                 "type": 0,
-                "allow": "3072",  # VIEW_CHANNEL + SEND_MESSAGES
+                "allow": "3072",  # VIEW_CHANNEL + SEND_MESSAGES + MANAGE_CHANNELS
                 "deny": "0"
             })
+        
+        # Add ticket creator permission to manage their own channel
+        channel_data["permission_overwrites"].append({
+            "id": user_id,
+            "type": 1,
+            "allow": "3072",  # VIEW_CHANNEL + SEND_MESSAGES
+            "deny": "0"
+        })
         
         # Create the channel
         channel = create_guild_channel(guild_id, channel_data)
@@ -307,8 +472,9 @@ def create_ticket_channel(guild_id, user_id, user_name, ticket_id, issue, catego
                 {
                     "type": 2,
                     "style": 2,  # Secondary style (grey)
-                    "label": "Add User",
-                    "custom_id": f"add_user_{ticket_id}"
+                    "label": "Delete Channel",
+                    "custom_id": f"delete_channel_{ticket_id}",
+                    "emoji": {"name": "🗑️"}
                 }
             ]
         }
@@ -390,6 +556,7 @@ def init_db():
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 discord_id TEXT UNIQUE,
                 discord_name TEXT,
+                discord_avatar TEXT,
                 in_game_name TEXT,
                 api_key TEXT UNIQUE CHECK(LENGTH(api_key) = 24),
                 server_id TEXT,
@@ -419,6 +586,36 @@ def init_db():
                 assigned_to TEXT,
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                 resolved_at TIMESTAMP
+            )
+        ''')
+        
+        # Matches table for score tracking
+        cursor.execute('''
+            CREATE TABLE IF NOT EXISTS matches (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                match_id TEXT UNIQUE,
+                team1_players TEXT,
+                team2_players TEXT,
+                team1_score INTEGER DEFAULT 0,
+                team2_score INTEGER DEFAULT 0,
+                status TEXT DEFAULT 'ongoing',
+                winner TEXT,
+                started_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                ended_at TIMESTAMP
+            )
+        ''')
+        
+        # Player stats per match
+        cursor.execute('''
+            CREATE TABLE IF NOT EXISTS match_stats (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                match_id TEXT,
+                player_id TEXT,
+                player_name TEXT,
+                team INTEGER,
+                kills INTEGER DEFAULT 0,
+                deaths INTEGER DEFAULT 0,
+                assists INTEGER DEFAULT 0
             )
         ''')
         
@@ -626,6 +823,83 @@ def register_commands():
             "name": "key",
             "description": "Show your API key",
             "type": 1
+        },
+        {
+            "name": "match",
+            "description": "Match management commands",
+            "type": 1,
+            "options": [
+                {
+                    "name": "start",
+                    "description": "Start a new match",
+                    "type": 1,
+                    "options": [
+                        {
+                            "name": "team1",
+                            "description": "Team 1 players (comma separated)",
+                            "type": 3,
+                            "required": True
+                        },
+                        {
+                            "name": "team2",
+                            "description": "Team 2 players (comma separated)",
+                            "type": 3,
+                            "required": True
+                        }
+                    ]
+                },
+                {
+                    "name": "score",
+                    "description": "Update match score",
+                    "type": 1,
+                    "options": [
+                        {
+                            "name": "match_id",
+                            "description": "Match ID",
+                            "type": 3,
+                            "required": True
+                        },
+                        {
+                            "name": "team1_score",
+                            "description": "Team 1 score",
+                            "type": 4,
+                            "required": True
+                        },
+                        {
+                            "name": "team2_score",
+                            "description": "Team 2 score",
+                            "type": 4,
+                            "required": True
+                        }
+                    ]
+                },
+                {
+                    "name": "end",
+                    "description": "End a match",
+                    "type": 1,
+                    "options": [
+                        {
+                            "name": "match_id",
+                            "description": "Match ID",
+                            "type": 3,
+                            "required": True
+                        }
+                    ]
+                },
+                {
+                    "name": "stats",
+                    "description": "Show match stats",
+                    "type": 1,
+                    "options": [
+                        {
+                            "name": "match_id",
+                            "description": "Match ID",
+                            "type": 3,
+                            "required": True
+                        }
+                    ]
+                }
+            ]
         }
     ]
     
@@ -648,6 +922,135 @@ def register_commands():
     except Exception as e:
         logger.error(f"Error registering commands: {e}")
         return False
+
+# =============================================================================
+# SCORE TRACKING FUNCTIONS
+# =============================================================================
+
+def start_match(team1_players, team2_players):
+    """Start a new match"""
+    match_id = f"MATCH-{int(time.time()) % 1000000:06d}"
+    
+    # Store in memory
+    score_matches[match_id] = {
+        'team1': {'players': team1_players, 'score': 0},
+        'team2': {'players': team2_players, 'score': 0},
+        'started_at': datetime.utcnow().isoformat()
+    }
+    
+    # Store in database
+    conn = get_db_connection()
+    conn.execute('''
+        INSERT INTO matches (match_id, team1_players, team2_players, status)
+        VALUES (?, ?, ?, 'ongoing')
+    ''', (match_id, ','.join(team1_players), ','.join(team2_players)))
+    conn.commit()
+    conn.close()
+    
+    # Send webhook
+    send_match_start(match_id, team1_players, team2_players)
+    
+    return match_id
+
+def update_score(match_id, team1_score, team2_score):
+    """Update match score"""
+    if match_id not in score_matches:
+        return False
+    
+    score_matches[match_id]['team1']['score'] = team1_score
+    score_matches[match_id]['team2']['score'] = team2_score
+    
+    # Update database
+    conn = get_db_connection()
+    conn.execute('''
+        UPDATE matches 
+        SET team1_score = ?, team2_score = ?
+        WHERE match_id = ?
+    ''', (team1_score, team2_score, match_id))
+    conn.commit()
+    conn.close()
+    
+    # Send webhook
+    send_score_update(
+        match_id,
+        team1_score,
+        team2_score,
+        score_matches[match_id]['team1']['players'],
+        score_matches[match_id]['team2']['players']
+    )
+    
+    return True
+
+def end_match(match_id):
+    """End a match"""
+    if match_id not in score_matches:
+        return False
+    
+    match_data = score_matches[match_id]
+    team1_score = match_data['team1']['score']
+    team2_score = match_data['team2']['score']
+    
+    # Determine winner
+    if team1_score > team2_score:
+        winner = "Team 1"
+    elif team2_score > team1_score:
+        winner = "Team 2"
+    else:
+        winner = "Draw"
+    
+    # Update database
+    conn = get_db_connection()
+    conn.execute('''
+        UPDATE matches 
+        SET status = 'ended', winner = ?, ended_at = CURRENT_TIMESTAMP
+        WHERE match_id = ?
+    ''', (winner, match_id))
+    
+    # Update player stats
+    # TODO: Add individual player stats update
+    
+    conn.commit()
+    conn.close()
+    
+    # Send webhook
+    send_match_end(
+        match_id,
+        winner,
+        team1_score,
+        team2_score,
+        match_data['team1']['players'],
+        match_data['team2']['players']
+    )
+    
+    # Remove from memory
+    del score_matches[match_id]
+    
+    return True
+
+def get_match_stats(match_id):
+    """Get match statistics"""
+    conn = get_db_connection()
+    match = conn.execute(
+        'SELECT * FROM matches WHERE match_id = ?',
+        (match_id,)
+    ).fetchone()
+    
+    stats = None
+    if match:
+        stats = {
+            'match_id': match['match_id'],
+            'team1_players': match['team1_players'].split(','),
+            'team2_players': match['team2_players'].split(','),
+            'team1_score': match['team1_score'],
+            'team2_score': match['team2_score'],
+            'status': match['status'],
+            'winner': match['winner'],
+            'started_at': match['started_at'],
+            'ended_at': match['ended_at']
+        }
+    
+    conn.close()
+    return stats
 
 # =============================================================================
 # DISCORD INTERACTIONS
@@ -681,9 +1084,11 @@ def interactions():
         custom_id = data.get('data', {}).get('custom_id', '')
         user_id = data.get('member', {}).get('user', {}).get('id')
         channel_id = data.get('channel_id')
+        guild_id = data.get('guild_id')
         
         logger.info(f"Button click: {custom_id} by {user_id}")
         
+        # CLOSE TICKET BUTTON
         if custom_id.startswith('close_ticket_'):
             ticket_id = custom_id.replace('close_ticket_', '')
             
@@ -702,7 +1107,7 @@ def interactions():
                     can_close = True
                 elif MOD_ROLE_ID:
                     # Check if user has mod role
-                    member = get_guild_member(data.get('guild_id'), user_id)
+                    member = get_guild_member(guild_id, user_id)
                     if member and MOD_ROLE_ID in member.get('roles', []):
                         can_close = True
                 
@@ -732,6 +1137,73 @@ def interactions():
                             "flags": 64
                         }
                     })
+        
+        # DELETE CHANNEL BUTTON
+        elif custom_id.startswith('delete_channel_'):
+            ticket_id = custom_id.replace('delete_channel_', '')
+            
+            # Check if user has permission to delete channel
+            can_delete = False
+            
+            # Ticket creator can delete
+            conn = get_db_connection()
+            ticket = conn.execute(
+                'SELECT * FROM tickets WHERE ticket_id = ?',
+                (ticket_id,)
+            ).fetchone()
+            conn.close()
+            
+            if ticket and str(user_id) == str(ticket['discord_id']):
+                can_delete = True
+            
+            # Admins/mods can delete
+            if not can_delete and MOD_ROLE_ID:
+                member = get_guild_member(guild_id, user_id)
+                if member and MOD_ROLE_ID in member.get('roles', []):
+                    can_delete = True
+            
+            if can_delete:
+                # Delete the channel
+                delete_result = delete_channel(channel_id)
+                if delete_result:
+                    # Update database
+                    conn = get_db_connection()
+                    conn.execute('''
+                        UPDATE tickets 
+                        SET status = "deleted", resolved_at = CURRENT_TIMESTAMP, assigned_to = ?
+                        WHERE ticket_id = ?
+                    ''', (user_id, ticket_id))
+                    conn.commit()
+                    conn.close()
+                    
+                    # Send webhook
+                    if ticket:
+                        send_ticket_webhook(ticket_id, ticket['discord_name'], ticket['discord_id'], 
+                                          ticket['category'], ticket['issue'], None, "channel deleted")
+                    
+                    return jsonify({
+                        "type": 4,
+                        "data": {
+                            "content": f"Channel has been deleted.",
+                            "flags": 64
+                        }
+                    })
+                else:
+                    return jsonify({
+                        "type": 4,
+                        "data": {
+                            "content": f"Could not delete channel.",
+                            "flags": 64
+                        }
+                    })
+            else:
+                return jsonify({
+                    "type": 4,
+                    "data": {
+                        "content": "You don't have permission to delete this channel.",
+                        "flags": 64
+                    }
+                })
         
         return jsonify({"type": 6})  # ACK for other button clicks
     
@@ -794,12 +1266,16 @@ def interactions():
             is_admin = is_user_admin_in_guild(server_id, user_id)
             api_key = generate_secure_key()
             
+            # Get Discord avatar
+            discord_user = get_discord_user(user_id)
+            discord_avatar = discord_user.get('avatar') if discord_user else None
+            
             # Insert new player
             conn.execute('''
                 INSERT INTO players 
-                (discord_id, discord_name, in_game_name, api_key, server_id, is_admin)
-                VALUES (?, ?, ?, ?, ?, ?)
-            ''', (user_id, user_name, in_game_name, api_key, server_id, 1 if is_admin else 0))
+                (discord_id, discord_name, discord_avatar, in_game_name, api_key, server_id, is_admin)
+                VALUES (?, ?, ?, ?, ?, ?, ?)
+            ''', (user_id, user_name, discord_avatar, in_game_name, api_key, server_id, 1 if is_admin else 0))
             
             conn.commit()
             conn.close()
@@ -1018,6 +1494,131 @@ def interactions():
                     "flags": 64
                 }
             })
+        
+        # MATCH COMMAND
+        elif command == 'match':
+            options = data.get('data', {}).get('options', [])
+            subcommand = options[0].get('name') if options else None
+            
+            # Check if user is admin
+            is_admin = is_user_admin_in_guild(server_id, user_id)
+            if not is_admin:
+                return jsonify({
+                    "type": 4,
+                    "data": {
+                        "content": "You need admin privileges to manage matches.",
+                        "flags": 64
+                    }
+                })
+            
+            # START MATCH
+            if subcommand == 'start':
+                sub_options = options[0].get('options', [])
+                team1_str = sub_options[0].get('value', '') if len(sub_options) > 0 else ''
+                team2_str = sub_options[1].get('value', '') if len(sub_options) > 1 else ''
+                
+                team1_players = [p.strip() for p in team1_str.split(',')]
+                team2_players = [p.strip() for p in team2_str.split(',')]
+                
+                match_id = start_match(team1_players, team2_players)
+                
+                return jsonify({
+                    "type": 4,
+                    "data": {
+                        "content": f"**Match Started**\n\n**Match ID:** `{match_id}`\n**Team 1:** {', '.join(team1_players)}\n**Team 2:** {', '.join(team2_players)}",
+                        "flags": 64
+                    }
+                })
+            
+            # UPDATE SCORE
+            elif subcommand == 'score':
+                sub_options = options[0].get('options', [])
+                match_id = sub_options[0].get('value', '') if len(sub_options) > 0 else ''
+                team1_score = sub_options[1].get('value', 0) if len(sub_options) > 1 else 0
+                team2_score = sub_options[2].get('value', 0) if len(sub_options) > 2 else 0
+                
+                success = update_score(match_id, team1_score, team2_score)
+                
+                if success:
+                    return jsonify({
+                        "type": 4,
+                        "data": {
+                            "content": f"**Score Updated**\n\n**Match ID:** `{match_id}`\n**Team 1:** {team1_score}\n**Team 2:** {team2_score}",
+                            "flags": 64
+                        }
+                    })
+                else:
+                    return jsonify({
+                        "type": 4,
+                        "data": {
+                            "content": f"Match `{match_id}` not found.",
+                            "flags": 64
+                        }
+                    })
+            
+            # END MATCH
+            elif subcommand == 'end':
+                sub_options = options[0].get('options', [])
+                match_id = sub_options[0].get('value', '') if len(sub_options) > 0 else ''
+                
+                success = end_match(match_id)
+                
+                if success:
+                    return jsonify({
+                        "type": 4,
+                        "data": {
+                            "content": f"**Match Ended**\n\n**Match ID:** `{match_id}`\nMatch has been ended and stats recorded.",
+                            "flags": 64
+                        }
+                    })
+                else:
+                    return jsonify({
+                        "type": 4,
+                        "data": {
+                            "content": f"Match `{match_id}` not found.",
+                            "flags": 64
+                        }
+                    })
+            
+            # MATCH STATS
+            elif subcommand == 'stats':
+                sub_options = options[0].get('options', [])
+                match_id = sub_options[0].get('value', '') if len(sub_options) > 0 else ''
+                
+                stats = get_match_stats(match_id)
+                
+                if stats:
+                    embed = {
+                        "title": f"Match Stats - {match_id}",
+                        "color": 0x00ff9d,
+                        "fields": [
+                            {"name": "Team 1", "value": f"Players: {', '.join(stats['team1_players'])}\nScore: **{stats['team1_score']}**", "inline": True},
+                            {"name": "Team 2", "value": f"Players: {', '.join(stats['team2_players'])}\nScore: **{stats['team2_score']}**", "inline": True},
+                            {"name": "Status", "value": stats['status'].upper(), "inline": True},
+                            {"name": "Winner", "value": stats['winner'] or "TBD", "inline": True},
+                            {"name": "Started", "value": f"<t:{int(datetime.strptime(stats['started_at'], '%Y-%m-%d %H:%M:%S').timestamp())}:R>", "inline": True}
+                        ],
+                        "timestamp": datetime.utcnow().isoformat()
+                    }
+                    
+                    if stats['ended_at']:
+                        embed["fields"].append({"name": "Ended", "value": f"<t:{int(datetime.strptime(stats['ended_at'], '%Y-%m-%d %H:%M:%S').timestamp())}:R>", "inline": True})
+                    
+                    return jsonify({
+                        "type": 4,
+                        "data": {
+                            "embeds": [embed],
+                            "flags": 64
+                        }
+                    })
+                else:
+                    return jsonify({
+                        "type": 4,
+                        "data": {
+                            "content": f"Match `{match_id}` not found.",
+                            "flags": 64
+                        }
+                    })
     
     # Unknown command type
     logger.warning(f"Unknown interaction type: {data.get('type')}")
@@ -1531,6 +2132,12 @@ def dashboard():
     
     is_admin = user_data.get('is_admin', 0)
     
+    # Get Discord avatar URL
+    discord_avatar = user_data.get('discord_avatar')
+    avatar_url = None
+    if discord_avatar:
+        avatar_url = get_discord_avatar_url(user_data['discord_id'], discord_avatar, 256)
+    
     # Get open tickets for this user
     conn = get_db_connection()
     tickets = conn.execute(
@@ -1548,6 +2155,9 @@ def dashboard():
     
     if not tickets_html:
         tickets_html = '<div class="no-tickets"><p>No open tickets</p></div>'
+    
+    # Avatar HTML
+    avatar_html = f'<img src="{avatar_url}" alt="Avatar" style="width: 100px; height: 100px; border-radius: 50%; border: 3px solid #9d00ff;">' if avatar_url else '<div class="avatar">?</div>'
     
     # Build the HTML response
     html = f'''<!DOCTYPE html>
@@ -1895,7 +2505,7 @@ def dashboard():
             .tickets-grid {{
                 grid-template-columns: 1fr;
             }}
-            .avatar {{
+            .avatar, .avatar img {{
                 width: 80px;
                 height: 80px;
                 font-size: 2rem;
@@ -1923,9 +2533,7 @@ def dashboard():
         <div class="profile-section">
             <div class="profile-card">
                 <div class="profile-header">
-                    <div class="avatar">
-                        ?
-                    </div>
+                    {avatar_html}
                     <div class="profile-info">
                         <h2>{user_data.get('in_game_name', 'Player')}</h2>
                         <p>Member for {days_ago} days • {total_games} games • Prestige {user_data.get('prestige', 0)}</p>
@@ -1974,10 +2582,6 @@ def dashboard():
                     Copy Key
                 </button>
                 
-                <button class="action-btn" onclick="createTicket()">
-                    Create Ticket
-                </button>
-                
                 { '<button class="action-btn admin-btn" onclick="changeKey()">Change Key (Admin)</button>' if is_admin else '' }
             </div>
         </div>
@@ -1996,10 +2600,6 @@ def dashboard():
             navigator.clipboard.writeText(key).then(() => {{
                 alert('API key copied to clipboard');
             }});
-        }}
-        
-        function createTicket() {{
-            alert('Use /ticket command in Discord to create tickets');
         }}
         
         function changeKey() {{
@@ -2114,6 +2714,135 @@ def health():
     })
 
 # =============================================================================
+# SCORE TRACKING API ENDPOINTS
+# =============================================================================
+
+@app.route('/api/match/start', methods=['POST'])
+def api_start_match():
+    """Start a new match via API"""
+    data = request.get_json()
+    api_key = data.get('api_key', '').upper()
+    
+    if not api_key:
+        return jsonify({"success": False, "error": "Missing API key"}), 401
+    
+    user_data = validate_api_key(api_key)
+    if not user_data:
+        return jsonify({"success": False, "error": "Invalid API key"}), 401
+    
+    if not user_data.get('is_admin'):
+        return jsonify({"success": False, "error": "Admin privileges required"}), 403
+    
+    team1_players = data.get('team1_players', [])
+    team2_players = data.get('team2_players', [])
+    
+    if not team1_players or not team2_players:
+        return jsonify({"success": False, "error": "Both teams must have players"}), 400
+    
+    match_id = start_match(team1_players, team2_players)
+    
+    return jsonify({
+        "success": True,
+        "match_id": match_id,
+        "message": "Match started"
+    })
+
+@app.route('/api/match/update', methods=['POST'])
+def api_update_score():
+    """Update match score via API"""
+    data = request.get_json()
+    api_key = data.get('api_key', '').upper()
+    
+    if not api_key:
+        return jsonify({"success": False, "error": "Missing API key"}), 401
+    
+    user_data = validate_api_key(api_key)
+    if not user_data:
+        return jsonify({"success": False, "error": "Invalid API key"}), 401
+    
+    if not user_data.get('is_admin'):
+        return jsonify({"success": False, "error": "Admin privileges required"}), 403
+    
+    match_id = data.get('match_id')
+    team1_score = data.get('team1_score', 0)
+    team2_score = data.get('team2_score', 0)
+    
+    if not match_id:
+        return jsonify({"success": False, "error": "Missing match_id"}), 400
+    
+    success = update_score(match_id, team1_score, team2_score)
+    
+    if success:
+        return jsonify({
+            "success": True,
+            "message": "Score updated"
+        })
+    else:
+        return jsonify({
+            "success": False,
+            "error": "Match not found"
+        }), 404
+
+@app.route('/api/match/end', methods=['POST'])
+def api_end_match():
+    """End a match via API"""
+    data = request.get_json()
+    api_key = data.get('api_key', '').upper()
+    
+    if not api_key:
+        return jsonify({"success": False, "error": "Missing API key"}), 401
+    
+    user_data = validate_api_key(api_key)
+    if not user_data:
+        return jsonify({"success": False, "error": "Invalid API key"}), 401
+    
+    if not user_data.get('is_admin'):
+        return jsonify({"success": False, "error": "Admin privileges required"}), 403
+    
+    match_id = data.get('match_id')
+    
+    if not match_id:
+        return jsonify({"success": False, "error": "Missing match_id"}), 400
+    
+    success = end_match(match_id)
+    
+    if success:
+        return jsonify({
+            "success": True,
+            "message": "Match ended"
+        })
+    else:
+        return jsonify({
+            "success": False,
+            "error": "Match not found"
+        }), 404
+
+@app.route('/api/match/stats/<match_id>')
+def api_get_match_stats(match_id):
+    """Get match stats via API"""
+    api_key = request.args.get('key', '').upper()
+    
+    if not api_key:
+        return jsonify({"success": False, "error": "Missing API key"}), 401
+    
+    user_data = validate_api_key(api_key)
+    if not user_data:
+        return jsonify({"success": False, "error": "Invalid API key"}), 401
+    
+    stats = get_match_stats(match_id)
+    
+    if stats:
+        return jsonify({
+            "success": True,
+            "match": stats
+        })
+    else:
+        return jsonify({
+            "success": False,
+            "error": "Match not found"
+        }), 404
+
+# =============================================================================
 # STARTUP
 # =============================================================================
 
@@ -2143,6 +2872,9 @@ if __name__ == '__main__':
     else:
         print("Discord token not set or invalid")
     
+    # Start ping scheduler
+    start_ping_scheduler()
+    
     print(f"\nWeb Interface: http://localhost:{port}")
     print(f"Bot Endpoint: /interactions")
     
@@ -2153,21 +2885,26 @@ if __name__ == '__main__':
     print("   /key - Show your API key")
     print("   /ticket [issue] [category] - Create support ticket")
     print("   /close - Close current ticket")
+    print("   /match start [team1] [team2] - Start a new match (Admin only)")
+    print("   /match score [match_id] [team1_score] [team2_score] - Update match score (Admin only)")
+    print("   /match end [match_id] - End a match (Admin only)")
+    print("   /match stats [match_id] - Show match stats")
     
     print("\nKey Features:")
+    print("   • Discord profile pictures on web dashboard")
+    print("   • Ticket channel delete permission for creators/admins")
+    print("   • Auto ping every 5 minutes to prevent shutdown")
+    print("   • Score tracking with webhook notifications")
+    print("   • Match management via Discord commands")
+    print("   • API endpoints for external tools")
     print("   • API Key Format: GOB- + 20 uppercase alphanumeric chars")
     print("   • Database constraint: Keys must be exactly 24 characters")
-    print("   • Frontend and backend format validation")
-    print("   • One-time registration only")
-    print("   • Fixed API key validation with regex pattern")
-    print("   • Working profile command")
-    print("   • Subtle web animations")
-    print("   • Goblin Hut theme")
     
     print("\nEnvironment Check:")
     print(f"   DISCORD_TOKEN: {'Set' if DISCORD_TOKEN else 'Not set'}")
     print(f"   DISCORD_CLIENT_ID: {'Set' if DISCORD_CLIENT_ID else 'Not set'}")
     print(f"   DISCORD_PUBLIC_KEY: {'Set' if DISCORD_PUBLIC_KEY else 'Not set'}")
+    print(f"   SCORE_WEBHOOK: {'Set' if SCORE_WEBHOOK else 'Not set'}")
     
     print("\nTroubleshooting:")
     print("   1. Install required libraries: pip install pynacl requests flask flask-cors")
