@@ -1,4 +1,4 @@
-# app.py - GOBLIN HUT BOT
+# app.py - GOBLIN HUT BOT - COMPLETE VERSION WITH ADMIN CHANNELS
 import os
 import json
 import sqlite3
@@ -33,8 +33,8 @@ DISCORD_TOKEN = os.environ.get('DISCORD_TOKEN', '')
 DISCORD_CLIENT_ID = os.environ.get('DISCORD_CLIENT_ID', '')
 DISCORD_PUBLIC_KEY = os.environ.get('DISCORD_PUBLIC_KEY', '')
 
-# Mod role ID for ticket access
-MOD_ROLE_ID = os.environ.get('MOD_ROLE_ID', '')
+# Admin role ID for channel access
+ADMIN_ROLE_ID = os.environ.get('ADMIN_ROLE_ID', '')
 
 # Webhook for ticket notifications (optional)
 TICKET_WEBHOOK = os.environ.get('TICKET_WEBHOOK', '')
@@ -141,10 +141,10 @@ def create_database_channel(guild_id):
             ]
         }
         
-        # Add admin permissions if MOD_ROLE_ID is set
-        if MOD_ROLE_ID:
+        # Add admin permissions if ADMIN_ROLE_ID is set
+        if ADMIN_ROLE_ID:
             channel_data["permission_overwrites"].append({
-                "id": MOD_ROLE_ID,
+                "id": ADMIN_ROLE_ID,
                 "type": 0,
                 "allow": "3072",  # VIEW_CHANNEL + SEND_MESSAGES
                 "deny": "0"
@@ -288,6 +288,7 @@ def backup_database():
             'tickets': [],
             'matches': [],
             'match_stats': [],
+            'admin_channels': [],
             'backup_time': datetime.utcnow().isoformat()
         }
         
@@ -310,6 +311,11 @@ def backup_database():
         match_stats = conn.execute('SELECT * FROM match_stats').fetchall()
         for stat in match_stats:
             data['match_stats'].append(dict(stat))
+        
+        # Get admin channels
+        admin_channels = conn.execute('SELECT * FROM admin_channels').fetchall()
+        for channel in admin_channels:
+            data['admin_channels'].append(dict(channel))
         
         conn.close()
         
@@ -342,6 +348,7 @@ def restore_database():
         cursor.execute('DELETE FROM tickets')
         cursor.execute('DELETE FROM matches')
         cursor.execute('DELETE FROM match_stats')
+        cursor.execute('DELETE FROM admin_channels')
         
         # Restore players
         for player in data.get('players', []):
@@ -400,10 +407,22 @@ def restore_database():
                 stat.get('deaths'), stat.get('assists')
             ))
         
+        # Restore admin channels
+        for channel in data.get('admin_channels', []):
+            cursor.execute('''
+                INSERT INTO admin_channels 
+                (id, channel_id, guild_id, created_by_id, created_by_name, channel_type, created_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?)
+            ''', (
+                channel.get('id'), channel.get('channel_id'), channel.get('guild_id'),
+                channel.get('created_by_id'), channel.get('created_by_name'),
+                channel.get('channel_type'), channel.get('created_at')
+            ))
+        
         conn.commit()
         conn.close()
         
-        logger.info(f"Database restored from backup: {len(data.get('players', []))} players, {len(data.get('tickets', []))} tickets")
+        logger.info(f"Database restored from backup: {len(data.get('players', []))} players, {len(data.get('tickets', []))} tickets, {len(data.get('admin_channels', []))} admin channels")
         return True
         
     except Exception as e:
@@ -513,6 +532,10 @@ def is_user_admin_in_guild(guild_id, user_id):
         
         guild = get_guild_info(guild_id)
         if guild and guild.get('owner_id') == user_id:
+            return True
+        
+        # Check if user has ADMIN_ROLE_ID
+        if ADMIN_ROLE_ID and ADMIN_ROLE_ID in member.get('roles', []):
             return True
         
         roles = get_guild_roles(guild_id)
@@ -691,6 +714,132 @@ def send_match_end(match_id, winner_team, team1_score, team2_score, team1_player
         logger.error(f"Match end webhook error: {e}")
 
 # =============================================================================
+# ADMIN CHANNEL SYSTEM (SIMILAR TO TICKET)
+# =============================================================================
+
+def create_admin_channel(guild_id, user_id, user_name, channel_type="admin-chat"):
+    """Create admin channel similar to ticket system"""
+    try:
+        # Get guild info
+        guild = get_guild_info(guild_id)
+        if not guild:
+            return None
+        
+        # Generate channel ID similar to ticket
+        short_id = f"admin-{int(time.time()) % 10000:04d}"
+        channel_name = short_id
+        
+        # Create channel data - SIMILAR TO TICKET CHANNEL
+        channel_data = {
+            "name": channel_name,
+            "type": 0,  # Text channel
+            "topic": f"Admin {channel_type} channel for {guild['name']}",
+            "parent_id": None,
+            "permission_overwrites": [
+                {
+                    "id": guild_id,  # @everyone
+                    "type": 0,
+                    "allow": "0",
+                    "deny": "1024"  # Deny VIEW_CHANNEL
+                },
+                {
+                    "id": user_id,  # Creator
+                    "type": 1,
+                    "allow": "3072",  # VIEW_CHANNEL + SEND_MESSAGES
+                    "deny": "0"
+                }
+            ]
+        }
+        
+        # Add bot permission
+        channel_data["permission_overwrites"].append({
+            "id": DISCORD_CLIENT_ID,  # Bot
+            "type": 2,
+            "allow": "3072",  # VIEW_CHANNEL + SEND_MESSAGES
+            "deny": "0"
+        })
+        
+        # Add admin role if configured
+        if ADMIN_ROLE_ID:
+            channel_data["permission_overwrites"].append({
+                "id": ADMIN_ROLE_ID,
+                "type": 0,
+                "allow": "3072",  # VIEW_CHANNEL + SEND_MESSAGES
+                "deny": "0"
+            })
+        
+        # Create the channel
+        channel = create_guild_channel(guild_id, channel_data)
+        if not channel:
+            return None
+        
+        # Create embed with close button - SIMILAR TO TICKET
+        embed = {
+            "title": f"🔧 Admin Channel",
+            "description": f"This channel is for admin communication only.",
+            "color": 0x00ff9d,
+            "fields": [
+                {"name": "Created By", "value": f"<@{user_id}> ({user_name})", "inline": True},
+                {"name": "Created", "value": f"<t:{int(time.time())}:R>", "inline": True},
+                {"name": "Type", "value": channel_type.replace('-', ' ').title(), "inline": True},
+                {"name": "Channel", "value": f"<#{channel['id']}>", "inline": True}
+            ],
+            "footer": {"text": "Click the button below to close this channel"},
+            "timestamp": datetime.utcnow().isoformat()
+        }
+        
+        # Create close button component - SIMILAR TO TICKET
+        components = {
+            "type": 1,
+            "components": [
+                {
+                    "type": 2,
+                    "style": 4,  # Danger style (red)
+                    "label": "Close Channel",
+                    "custom_id": f"close_admin_{channel['id']}"
+                }
+            ]
+        }
+        
+        welcome_message = {
+            "content": f"<@{user_id}> Welcome to the admin channel!",
+            "embeds": [embed],
+            "components": [components]
+        }
+        
+        message_response = discord_api_request(f"/channels/{channel['id']}/messages", "POST", welcome_message)
+        
+        logger.info(f"Created admin channel: {channel['id']}")
+        return channel['id']
+        
+    except Exception as e:
+        logger.error(f"Error creating admin channel: {e}")
+        return None
+
+def close_admin_channel(channel_id, closed_by):
+    """Close admin channel - similar to closing tickets"""
+    try:
+        # Delete the channel
+        delete_result = delete_channel(channel_id)
+        
+        if delete_result:
+            # Remove from database
+            conn = get_db_connection()
+            conn.execute('DELETE FROM admin_channels WHERE channel_id = ?', (channel_id,))
+            conn.commit()
+            conn.close()
+            
+            logger.info(f"Admin channel {channel_id} deleted by {closed_by}")
+            return True
+        else:
+            logger.error(f"Failed to delete admin channel {channel_id}")
+            return False
+        
+    except Exception as e:
+        logger.error(f"Error closing admin channel: {e}")
+        return False
+
+# =============================================================================
 # TICKET SYSTEM
 # =============================================================================
 
@@ -731,12 +880,12 @@ def create_ticket_channel(guild_id, user_id, user_name, ticket_id, issue, catego
             ]
         }
         
-        # Add mod role if configured
-        if MOD_ROLE_ID:
+        # Add admin role if configured
+        if ADMIN_ROLE_ID:
             channel_data["permission_overwrites"].append({
-                "id": MOD_ROLE_ID,
+                "id": ADMIN_ROLE_ID,
                 "type": 0,
-                "allow": "3072",  # VIEW_CHANNEL + SEND_MESSAGES + MANAGE_CHANNELS
+                "allow": "3072",  # VIEW_CHANNEL + SEND_MESSAGES
                 "deny": "0"
             })
         
@@ -777,13 +926,6 @@ def create_ticket_channel(guild_id, user_id, user_name, ticket_id, issue, catego
                     "style": 4,  # Danger style (red)
                     "label": "Close Ticket",
                     "custom_id": f"close_ticket_{ticket_id}"
-                },
-                {
-                    "type": 2,
-                    "style": 2,  # Secondary style (grey)
-                    "label": "Delete Channel",
-                    "custom_id": f"delete_channel_{ticket_id}",
-                    "emoji": {"name": "🗑️"}
                 }
             ]
         }
@@ -861,6 +1003,20 @@ def delete_channel_by_id(channel_id, user_id, guild_id):
         if can_delete:
             delete_result = delete_channel(channel_id)
             if delete_result:
+                # Check and remove from appropriate tables
+                conn = get_db_connection()
+                
+                # Check if it's a ticket
+                ticket = conn.execute('SELECT * FROM tickets WHERE channel_id = ?', (channel_id,)).fetchone()
+                if ticket:
+                    conn.execute('UPDATE tickets SET status = "deleted" WHERE channel_id = ?', (channel_id,))
+                
+                # Check if it's an admin channel
+                conn.execute('DELETE FROM admin_channels WHERE channel_id = ?', (channel_id,))
+                
+                conn.commit()
+                conn.close()
+                
                 logger.info(f"Channel {channel_id} deleted by user {user_id}")
                 return True
             else:
@@ -961,6 +1117,19 @@ def init_db():
                 kills INTEGER DEFAULT 0,
                 deaths INTEGER DEFAULT 0,
                 assists INTEGER DEFAULT 0
+            )
+        ''')
+        
+        # Admin channels table
+        cursor.execute('''
+            CREATE TABLE IF NOT EXISTS admin_channels (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                channel_id TEXT UNIQUE,
+                guild_id TEXT,
+                created_by_id TEXT,
+                created_by_name TEXT,
+                channel_type TEXT DEFAULT 'admin-chat',
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             )
         ''')
         
@@ -1171,8 +1340,22 @@ def register_commands():
         },
         {
             "name": "setup",
-            "description": "Setup bot database channel (Admin only)",
-            "type": 1
+            "description": "Setup admin/database channels (Admin only)",
+            "type": 1,
+            "options": [
+                {
+                    "name": "type",
+                    "description": "Channel type to create",
+                    "type": 3,
+                    "required": False,
+                    "choices": [
+                        {"name": "Admin Chat", "value": "admin-chat"},
+                        {"name": "Admin Voice", "value": "admin-voice"},
+                        {"name": "Database", "value": "database"},
+                        {"name": "Logs", "value": "logs"}
+                    ]
+                }
+            ]
         },
         {
             "name": "backup",
@@ -1183,19 +1366,6 @@ def register_commands():
             "name": "restore",
             "description": "Restore database from backup (Admin only)",
             "type": 1
-        },
-        {
-            "name": "deletechannel",
-            "description": "Delete a channel (Admin only)",
-            "type": 1,
-            "options": [
-                {
-                    "name": "channel_id",
-                    "description": "Channel ID to delete",
-                    "type": 3,
-                    "required": True
-                }
-            ]
         }
     ]
     
@@ -1301,10 +1471,6 @@ def end_match(match_id):
         SET status = 'ended', winner = ?, ended_at = CURRENT_TIMESTAMP
         WHERE match_id = ?
     ''', (winner, match_id))
-    
-    # Update player stats
-    # TODO: Add individual player stats update
-    
     conn.commit()
     conn.close()
     
@@ -1401,10 +1567,10 @@ def interactions():
                 can_close = False
                 if str(user_id) == str(ticket['discord_id']):
                     can_close = True
-                elif MOD_ROLE_ID:
-                    # Check if user has mod role
+                elif ADMIN_ROLE_ID:
+                    # Check if user has admin role
                     member = get_guild_member(guild_id, user_id)
-                    if member and MOD_ROLE_ID in member.get('roles', []):
+                    if member and ADMIN_ROLE_ID in member.get('roles', []):
                         can_close = True
                 
                 if can_close:
@@ -1434,53 +1600,22 @@ def interactions():
                         }
                     })
         
-        # DELETE CHANNEL BUTTON
-        elif custom_id.startswith('delete_channel_'):
-            ticket_id = custom_id.replace('delete_channel_', '')
+        # CLOSE ADMIN CHANNEL BUTTON
+        elif custom_id.startswith('close_admin_'):
+            channel_to_close = custom_id.replace('close_admin_', '')
             
-            # Check if user has permission to delete channel
-            can_delete = False
+            # Check if user has permission
+            can_close = False
+            if is_user_admin_in_guild(guild_id, user_id):
+                can_close = True
             
-            # Ticket creator can delete
-            conn = get_db_connection()
-            ticket = conn.execute(
-                'SELECT * FROM tickets WHERE ticket_id = ?',
-                (ticket_id,)
-            ).fetchone()
-            conn.close()
-            
-            if ticket and str(user_id) == str(ticket['discord_id']):
-                can_delete = True
-            
-            # Admins/mods can delete
-            if not can_delete and MOD_ROLE_ID:
-                member = get_guild_member(guild_id, user_id)
-                if member and MOD_ROLE_ID in member.get('roles', []):
-                    can_delete = True
-            
-            if can_delete:
-                # Delete the channel
-                delete_result = delete_channel(channel_id)
-                if delete_result:
-                    # Update database
-                    conn = get_db_connection()
-                    conn.execute('''
-                        UPDATE tickets 
-                        SET status = "deleted", resolved_at = CURRENT_TIMESTAMP, assigned_to = ?
-                        WHERE ticket_id = ?
-                    ''', (user_id, ticket_id))
-                    conn.commit()
-                    conn.close()
-                    
-                    # Send webhook
-                    if ticket:
-                        send_ticket_webhook(ticket_id, ticket['discord_name'], ticket['discord_id'], 
-                                          ticket['category'], ticket['issue'], None, "channel deleted")
-                    
+            if can_close:
+                success = close_admin_channel(channel_to_close, user_id)
+                if success:
                     return jsonify({
                         "type": 4,
                         "data": {
-                            "content": f"Channel has been deleted.",
+                            "content": f"Admin channel has been closed and deleted.",
                             "flags": 64
                         }
                     })
@@ -1496,7 +1631,7 @@ def interactions():
                 return jsonify({
                     "type": 4,
                     "data": {
-                        "content": "You don't have permission to delete this channel.",
+                        "content": "You don't have permission to close admin channels.",
                         "flags": 64
                     }
                 })
@@ -1791,7 +1926,7 @@ def interactions():
                 }
             })
         
-        # SETUP COMMAND
+        # SETUP COMMAND - CREATES ADMIN OR DATABASE CHANNEL
         elif command == 'setup':
             # Check if user is admin
             is_admin = is_user_admin_in_guild(server_id, user_id)
@@ -1799,36 +1934,70 @@ def interactions():
                 return jsonify({
                     "type": 4,
                     "data": {
-                        "content": "You need admin privileges to setup the database.",
+                        "content": "You need admin privileges to setup channels.",
                         "flags": 64
                     }
                 })
             
-            logger.info(f"Setup command by admin {user_name}")
+            options = data.get('data', {}).get('options', [])
+            channel_type = options[0].get('value', 'admin-chat') if options else 'admin-chat'
             
-            # Create database channel
-            channel_id = create_database_channel(server_id)
+            logger.info(f"Setup command by admin {user_name} for {channel_type}")
             
-            if channel_id:
-                global DATABASE_CHANNEL_ID
-                DATABASE_CHANNEL_ID = channel_id
+            if channel_type == 'database':
+                # Create database channel
+                channel_id = create_database_channel(server_id)
                 
-                # Backup current database
-                backup_success = backup_database()
-                
-                return jsonify({
-                    "type": 4,
-                    "data": {
-                        "content": f"**Database Setup Complete**\n\n**Channel:** <#{channel_id}>\n**Backup:** {'Successful' if backup_success else 'Failed'}\n\nThis channel will store all bot data for persistence. DO NOT DELETE IT.",
-                        "flags": 64
-                    }
-                })
+                if channel_id:
+                    global DATABASE_CHANNEL_ID
+                    DATABASE_CHANNEL_ID = channel_id
+                    
+                    # Backup current database
+                    backup_success = backup_database()
+                    
+                    return jsonify({
+                        "type": 4,
+                        "data": {
+                            "content": f"**Database Setup Complete**\n\n**Channel:** <#{channel_id}>\n**Backup:** {'Successful' if backup_success else 'Failed'}\n\nThis channel will store all bot data for persistence. DO NOT DELETE IT.",
+                            "flags": 64
+                        }
+                    })
+                else:
+                    return jsonify({
+                        "type": 4,
+                        "data": {
+                            "content": "Failed to create database channel. Check bot permissions.",
+                            "flags": 64
+                        }
+                    })
             else:
-                return jsonify({
-                    "type": 4,
-                    "data": {
-                        "content": "Failed to create database channel. Check bot permissions.",
-                        "flags": 64
+                # Create admin channel (similar to ticket)
+                channel_id = create_admin_channel(server_id, user_id, user_name, channel_type)
+                
+                if channel_id:
+                    # Store in database
+                    conn = get_db_connection()
+                    conn.execute('''
+                        INSERT INTO admin_channels 
+                        (channel_id, guild_id, created_by_id, created_by_name, channel_type)
+                        VALUES (?, ?, ?, ?, ?)
+                    ''', (channel_id, server_id, user_id, user_name, channel_type))
+                    conn.commit()
+                    conn.close()
+                    
+                    return jsonify({
+                        "type": 4,
+                        "data": {
+                            "content": f"**Admin Channel Created**\n\n**Type:** {channel_type.replace('-', ' ').title()}\n**Channel:** <#{channel_id}>\n\nThis channel is visible only to admins and the bot.",
+                            "flags": 64
+                        }
+                    })
+                else:
+                    return jsonify({
+                        "type": 4,
+                        "data": {
+                            "content": "Failed to create admin channel. Check bot permissions.",
+                            "flags": 64
                     }
                 })
         
@@ -1851,7 +2020,7 @@ def interactions():
                 return jsonify({
                     "type": 4,
                     "data": {
-                        "content": "No database channel set up. Use `/setup` first.",
+                        "content": "No database channel set up. Use `/setup database` first.",
                         "flags": 64
                     }
                 })
@@ -1894,7 +2063,7 @@ def interactions():
                 return jsonify({
                     "type": 4,
                     "data": {
-                        "content": "No database channel set up. Use `/setup` first.",
+                        "content": "No database channel set up. Use `/setup database` first.",
                         "flags": 64
                     }
                 })
@@ -1914,62 +2083,6 @@ def interactions():
                     "type": 4,
                     "data": {
                         "content": "Failed to restore database. Check logs for details.",
-                        "flags": 64
-                    }
-                })
-        
-        # DELETECHANNEL COMMAND
-        elif command == 'deletechannel':
-            # Check if user is admin
-            is_admin = is_user_admin_in_guild(server_id, user_id)
-            if not is_admin:
-                return jsonify({
-                    "type": 4,
-                    "data": {
-                        "content": "You need admin privileges to delete channels.",
-                        "flags": 64
-                    }
-                })
-            
-            options = data.get('data', {}).get('options', [])
-            channel_id_to_delete = options[0].get('value', '') if options else ''
-            
-            if not channel_id_to_delete:
-                return jsonify({
-                    "type": 4,
-                    "data": {
-                        "content": "Please provide a channel ID to delete.",
-                        "flags": 64
-                    }
-                })
-            
-            logger.info(f"Deletechannel command by admin {user_name}: {channel_id_to_delete}")
-            
-            # Don't allow deleting the database channel
-            if channel_id_to_delete == DATABASE_CHANNEL_ID:
-                return jsonify({
-                    "type": 4,
-                    "data": {
-                        "content": "Cannot delete the database channel. This channel is required for data persistence.",
-                        "flags": 64
-                    }
-                })
-            
-            success = delete_channel_by_id(channel_id_to_delete, user_id, server_id)
-            
-            if success:
-                return jsonify({
-                    "type": 4,
-                    "data": {
-                        "content": f"**Channel Deleted**\n\nChannel `{channel_id_to_delete}` has been deleted.",
-                        "flags": 64
-                    }
-                })
-            else:
-                return jsonify({
-                    "type": 4,
-                    "data": {
-                        "content": f"Failed to delete channel `{channel_id_to_delete}`. Check bot permissions.",
                         "flags": 64
                     }
                 })
@@ -3393,7 +3506,7 @@ if __name__ == '__main__':
     test_key_validation()
     
     print("\n" + "="*60)
-    print("GOBLIN HUT BOT")
+    print("GOBLIN HUT BOT - COMPLETE VERSION WITH ADMIN CHANNELS")
     print("="*60)
     
     if test_discord_token():
@@ -3416,7 +3529,7 @@ if __name__ == '__main__':
         else:
             print("Could not restore database from channel")
     else:
-        print("\nNo database channel ID set. Use `/setup` in Discord to create one.")
+        print("\nNo database channel ID set. Use `/setup database` in Discord to create one.")
     
     # Start ping scheduler
     start_ping_scheduler()
@@ -3431,33 +3544,23 @@ if __name__ == '__main__':
     print("   /close - Close current ticket")
     print("   /profile - Show your profile and stats")
     print("   /key - Show your API key")
-    print("   /setup - Create private database channel for data persistence (Admin only)")
+    print("   /setup [type] - Create admin/database channel (Admin only)")
+    print("        Types: admin-chat, admin-voice, database, logs")
     print("   /backup - Backup current database to channel (Admin only)")
     print("   /restore - Restore database from channel backup (Admin only)")
-    print("   /deletechannel [channel_id] - Delete a channel (Admin only)")
     
-    print("\nFeatures:")
-    print("   • Leaderboard on login screen")
-    print("   • Direct tool download from dashboard")
-    print("   • Tool download link: https://github.com/yourusername/goblin-hut-tool/releases")
-    print("   • Discord profile pictures on web dashboard")
-    print("   • Ticket channel delete permission for creators/admins")
-    print("   • Auto ping every 5 minutes to prevent shutdown")
-    print("   • API Key Format: GOB- + 20 uppercase alphanumeric chars")
-    print("   • Database constraint: Keys must be exactly 24 characters")
-    print("   • Leaderboard showing top players by K/D ratio")
-    
-    print("\nDatabase Persistence System:")
-    print("   • Creates private 'database-logs' channel accessible only to bot and admins")
-    print("   • Stores all data in base64-encoded messages")
-    print("   • Automatic backup on setup")
-    print("   • Manual backup/restore commands")
-    print("   • Prevents data loss on server restart")
+    print("\nAdmin Channel Features:")
+    print("   • Creates channels similar to tickets but admin-only")
+    print("   • Has close button like tickets")
+    print("   • Only visible to admins and bot")
+    print("   • Database channel for data persistence")
+    print("   • Admin chat/voice channels for team communication")
     
     print("\nEnvironment Check:")
     print(f"   DISCORD_TOKEN: {'Set' if DISCORD_TOKEN else 'Not set'}")
     print(f"   DISCORD_CLIENT_ID: {'Set' if DISCORD_CLIENT_ID else 'Not set'}")
     print(f"   DISCORD_PUBLIC_KEY: {'Set' if DISCORD_PUBLIC_KEY else 'Not set'}")
+    print(f"   ADMIN_ROLE_ID: {'Set' if ADMIN_ROLE_ID else 'Not set'}")
     print(f"   SCORE_WEBHOOK: {'Set' if SCORE_WEBHOOK else 'Not set'}")
     print(f"   DATABASE_CHANNEL_ID: {'Set' if DATABASE_CHANNEL_ID else 'Not set'}")
     
@@ -3466,8 +3569,7 @@ if __name__ == '__main__':
     print("   2. Set all Discord environment variables")
     print("   3. Check bot has proper permissions")
     print("   4. View logs for detailed errors")
-    print("   5. Run key validation test: test_key_validation()")
-    print("   6. Use /setup in Discord to create database channel")
+    print("   5. Use /setup database in Discord to create database channel")
     
     print("\n" + "="*60 + "\n")
     
