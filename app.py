@@ -1901,6 +1901,8 @@ def interactions():
         
         # SETUP COMMAND - CREATES KEY DATABASE OR STATS WEBHOOK
         elif command == 'setup':
+            global DATABASE_CHANNEL_ID  # ADDED THIS LINE - FIXED LOCATION
+            
             # Check if user is admin
             is_admin = is_user_admin_in_guild(server_id, user_id)
             if not is_admin:
@@ -1922,7 +1924,6 @@ def interactions():
                 channel_id = create_key_database_channel(server_id)
                 
                 if channel_id:
-                    global DATABASE_CHANNEL_ID
                     DATABASE_CHANNEL_ID = channel_id
                     
                     # Update with current keys
