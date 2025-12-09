@@ -1901,8 +1901,6 @@ def interactions():
         
         # SETUP COMMAND - CREATES KEY DATABASE OR STATS WEBHOOK
         elif command == 'setup':
-            global DATABASE_CHANNEL_ID  # ADDED THIS LINE - FIXED LOCATION
-            
             # Check if user is admin
             is_admin = is_user_admin_in_guild(server_id, user_id)
             if not is_admin:
@@ -1918,6 +1916,9 @@ def interactions():
             channel_type = options[0].get('value', 'key-database') if options else 'key-database'
             
             logger.info(f"Setup command by admin {user_name} for {channel_type}")
+            
+            # Declare global at the beginning of this scope
+            global DATABASE_CHANNEL_ID
             
             if channel_type == 'key-database':
                 # Create key database channel
