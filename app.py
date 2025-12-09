@@ -3686,7 +3686,7 @@ def api_end_match():
 @app.route('/api/match/stats/<match_id>')
 def api_get_match_stats(match_id):
     """Get match stats via API"""
-    api_key = request.args.get('key', '').upper())
+    api_key = request.args.get('key', '').upper()
     
     if not api_key:
         return jsonify({"success": False, "error": "Missing API key"}), 401
