@@ -188,18 +188,17 @@ def create_key_database_channel(guild_id):
 
 def update_key_database():
     """Update key database channel with all player keys"""
-    global DATABASE_CHANNEL_ID
-    
-    if not DATABASE_CHANNEL_ID:
+    # Use the global variable without redeclaring it here
+    if not globals().get('DATABASE_CHANNEL_ID'):
         logger.warning("No key database channel set")
         return False
     
     try:
         # First, clear all messages in the channel
-        messages = discord_api_request(f"/channels/{DATABASE_CHANNEL_ID}/messages?limit=100")
+        messages = discord_api_request(f"/channels/{globals().get('DATABASE_CHANNEL_ID')}/messages?limit=100")
         if messages:
             for msg in messages:
-                discord_api_request(f"/channels/{DATABASE_CHANNEL_ID}/messages/{msg['id']}", "DELETE")
+                discord_api_request(f"/channels/{globals().get('DATABASE_CHANNEL_ID')}/messages/{msg['id']}", "DELETE")
                 time.sleep(0.1)
         
         # Get all players from database
@@ -236,7 +235,7 @@ Server: {player['server_id']}
         # Send batched messages
         for i, batch in enumerate(message_batch):
             message = {"content": batch}
-            discord_api_request(f"/channels/{DATABASE_CHANNEL_ID}/messages", "POST", message)
+            discord_api_request(f"/channels/{globals().get('DATABASE_CHANNEL_ID')}/messages", "POST", message)
             time.sleep(0.5)  # Avoid rate limiting
         
         # Send summary
@@ -253,7 +252,7 @@ Server: {player['server_id']}
             "timestamp": datetime.utcnow().isoformat()
         }
         
-        discord_api_request(f"/channels/{DATABASE_CHANNEL_ID}/messages", "POST", {
+        discord_api_request(f"/channels/{globals().get('DATABASE_CHANNEL_ID')}/messages", "POST", {
             "embeds": [summary_embed]
         })
         
@@ -1681,7 +1680,7 @@ def interactions():
             conn.close()
             
             # Update key database if exists
-            if DATABASE_CHANNEL_ID:
+            if globals().get('DATABASE_CHANNEL_ID'):
                 update_key_database()
             
             admin_note = "\n**Admin access detected** - You have additional privileges." if is_admin else ""
@@ -1917,15 +1916,13 @@ def interactions():
             
             logger.info(f"Setup command by admin {user_name} for {channel_type}")
             
-            # Declare global at the beginning of this scope
-            global DATABASE_CHANNEL_ID
-            
             if channel_type == 'key-database':
                 # Create key database channel
                 channel_id = create_key_database_channel(server_id)
                 
                 if channel_id:
-                    DATABASE_CHANNEL_ID = channel_id
+                    # Use globals() to modify the global variable
+                    globals()['DATABASE_CHANNEL_ID'] = channel_id
                     
                     # Update with current keys
                     update_key_database()
@@ -3477,7 +3474,7 @@ def change_key():
     conn.close()
     
     # Update key database
-    if DATABASE_CHANNEL_ID:
+    if globals().get('DATABASE_CHANNEL_ID'):
         update_key_database()
     
     return jsonify({"success": True, "new_key": new_key})
@@ -3594,7 +3591,7 @@ def test_all_functions():
     # Test 5: Channel creation simulation
     print("\n5. Testing channel creation logic...")
     print(f"   ADMIN_ROLE_ID set: {bool(ADMIN_ROLE_ID)}")
-    print(f"   DATABASE_CHANNEL_ID set: {bool(DATABASE_CHANNEL_ID)}")
+    print(f"   DATABASE_CHANNEL_ID set: {bool(globals().get('DATABASE_CHANNEL_ID'))}")
     
     # Test 6: Session management
     print("\n6. Testing session management...")
