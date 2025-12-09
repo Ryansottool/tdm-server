@@ -16,7 +16,14 @@ from datetime import datetime, timedelta
 import logging
 import secrets
 import hashlib
-import psutil
+
+# Try to import psutil, but handle if it's not available
+try:
+    import psutil
+    PSUTIL_AVAILABLE = True
+except ImportError:
+    PSUTIL_AVAILABLE = False
+    print("Warning: psutil module not installed. Uptime tracking will be limited.")
 
 app = Flask(__name__)
 app.secret_key = os.environ.get('SECRET_KEY', secrets.token_hex(32))
@@ -332,9 +339,14 @@ def send_stats_webhook(channel_id=None, webhook_url=None):
         avg_kd = total_kills / total_deaths
         
         # Calculate server uptime
-        boot_time = time.time() - psutil.boot_time()
-        uptime_days = int(boot_time // 86400)
-        uptime_hours = int((boot_time % 86400) // 3600)
+        if PSUTIL_AVAILABLE:
+            boot_time = time.time() - psutil.boot_time()
+            uptime_days = int(boot_time // 86400)
+            uptime_hours = int((boot_time % 86400) // 3600)
+            uptime_text = f"**{uptime_days}d {uptime_hours}h**"
+        else:
+            # Fallback to using process start time if psutil is not available
+            uptime_text = "**Active**"
         
         # Create stats embed
         embed = {
@@ -347,7 +359,7 @@ def send_stats_webhook(channel_id=None, webhook_url=None):
                 {"name": "⚔️ Avg K/D Ratio", "value": f"**{avg_kd:.2f}**", "inline": True},
                 {"name": "🏆 Games Played", "value": f"**{total_games}**", "inline": True},
                 {"name": "📊 Win Rate", "value": f"**{(total_wins/total_games*100):.1f}%**" if total_games > 0 else "**0%**", "inline": True},
-                {"name": "⏰ Server Uptime", "value": f"**{uptime_days}d {uptime_hours}h**", "inline": True}
+                {"name": "⏰ Server Uptime", "value": uptime_text, "inline": True}
             ],
             "footer": {"text": "Updates every 5 minutes • Use /register to join!"},
             "timestamp": datetime.utcnow().isoformat()
@@ -2525,7 +2537,7 @@ def home():
                             </div>
                             <div class="stat-item">
                                 <div class="stat-label">Server Uptime</div>
-                                <div class="stat-value" id="serverUptime">0h</div>
+                                <div class="stat-value" id="serverUptime">Active</div>
                             </div>
                         </div>
                     </div>
@@ -2596,14 +2608,6 @@ def home():
                     document.getElementById('totalPlayers').textContent = data.total_players || '0';
                     document.getElementById('totalKills').textContent = data.total_kills?.toLocaleString() || '0';
                     document.getElementById('totalGames').textContent = data.total_games || '0';
-                    
-                    // Calculate uptime from timestamp
-                    if (data.timestamp) {
-                        const now = new Date();
-                        const serverTime = new Date(data.timestamp);
-                        const diff = Math.floor((now - serverTime) / 1000 / 60 / 60); // hours
-                        document.getElementById('serverUptime').textContent = `${diff}h`;
-                    }
                     
                     // Update bot status
                     const status = document.getElementById('botStatus');
