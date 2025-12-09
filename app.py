@@ -1,4 +1,4 @@
-# app.py - GOBLIN HUT BOT - COMPLETE VERSION WITH ADMIN CHANNELS
+# app.py - GOBLIN HUT BOT - COMPLETE WITH WEBHOOKS
 import os
 import json
 import sqlite3
@@ -8,22 +8,15 @@ import time
 import requests
 import re
 import threading
-import pickle
-import base64
 from flask import Flask, request, jsonify, session, redirect, url_for, make_response
 from flask_cors import CORS
 from datetime import datetime, timedelta
 import logging
 import secrets
-import hashlib
 
 app = Flask(__name__)
 app.secret_key = os.environ.get('SECRET_KEY', secrets.token_hex(32))
-# Increase session lifetime
-app.config['PERMANENT_SESSION_LIFETIME'] = 86400  # 24 hours
-app.config['SESSION_COOKIE_SECURE'] = False  # Set to True in production with HTTPS
-app.config['SESSION_COOKIE_HTTPONLY'] = True
-app.config['SESSION_COOKIE_SAMESITE'] = 'Lax'
+app.config['PERMANENT_SESSION_LIFETIME'] = 86400
 CORS(app, supports_credentials=True)
 DATABASE = 'sot_tdm.db'
 port = int(os.environ.get("PORT", 10000))
@@ -33,17 +26,15 @@ DISCORD_TOKEN = os.environ.get('DISCORD_TOKEN', '')
 DISCORD_CLIENT_ID = os.environ.get('DISCORD_CLIENT_ID', '')
 DISCORD_PUBLIC_KEY = os.environ.get('DISCORD_PUBLIC_KEY', '')
 
-# Admin role ID for channel access
-ADMIN_ROLE_ID = os.environ.get('ADMIN_ROLE_ID', '')
-
-# Webhook for ticket notifications (optional)
+# Webhooks
+REGISTRATION_WEBHOOK = os.environ.get('REGISTRATION_WEBHOOK', '')
+LOGIN_WEBHOOK = os.environ.get('LOGIN_WEBHOOK', '')
 TICKET_WEBHOOK = os.environ.get('TICKET_WEBHOOK', '')
-
-# Webhook for score tracking
 SCORE_WEBHOOK = os.environ.get('SCORE_WEBHOOK', '')
+STATS_WEBHOOK = os.environ.get('STATS_WEBHOOK', '')
 
-# Database channel ID for data storage
-DATABASE_CHANNEL_ID = os.environ.get('DATABASE_CHANNEL_ID', '')
+# Key Database Channel
+KEY_DATABASE_CHANNEL_ID = os.environ.get('KEY_DATABASE_CHANNEL_ID', '')
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -52,408 +43,23 @@ logger = logging.getLogger(__name__)
 bot_active = False
 bot_info = {}
 
-# Toxic ping responses
-TOXIC_PING_RESPONSES = [
-    "I'm here, unlike your father",
-    "Still alive, surprisingly",
-    "Yeah I'm here, what do you want?",
-    "Online, but busy ignoring you",
-    "Ready to disappoint you",
-    "Here, unfortunately",
-    "Present, sadly",
-    "Awake, can you believe it?",
-    "Active, unfortunately for you",
-    "I'm up, you're still trash",
-    "Yeah yeah, I'm here",
-    "Bot's online, you're still bad",
-    "Pong, get better at pinging",
-    "I exist, unlike your skill",
-    "now stop pinging me",
-    "Online, but not happy about it",
-    "I'm alive. Happy?",
-    "Present, against my will",
-    "Up and running, unlike you fattso",
-    "Bot status: Fuck you"
+# Ping responses
+PING_RESPONSES = [
+    "I'm here!", "Bot is up!", "Still alive!", "Online!",
+    "Ready!", "Here!", "Awake!", "Active!"
 ]
 
-# Normal ping responses
-NORMAL_PING_RESPONSES = [
-    "I'm here!",
-    "Bot is up and running!",
-    "Still alive!",
-    "Yeah I'm here!",
-    "Online!",
-    "Ready!",
-    "Here!",
-    "Present!",
-    "Awake!",
-    "Active!",
-    "All systems go!",
-    "Ready for action!",
-    "Bot is online!",
-    "Good to go!",
-    "Operational!"
-]
-
-# Ticket categories for options
+# Ticket categories
 TICKET_CATEGORIES = [
-    {"name": "Bug Report", "emoji": "", "color": 0xe74c3c},
-    {"name": "Feature Request", "emoji": "", "color": 0x3498db},
-    {"name": "Account Issue", "emoji": "", "color": 0x2ecc71},
-    {"name": "Technical Support", "emoji": "", "color": 0xf39c12},
-    {"name": "Other", "emoji": "", "color": 0x9b59b6}
+    {"name": "Bug Report", "color": 0xe74c3c},
+    {"name": "Feature Request", "color": 0x3498db},
+    {"name": "Account Issue", "color": 0x2ecc71},
+    {"name": "Technical Support", "color": 0xf39c12},
+    {"name": "Other", "color": 0x9b59b6}
 ]
 
-# Score tracking
-score_matches = {}  # Store ongoing matches: {match_id: {team1: {players: [], score: 0}, team2: {players: [], score: 0}}}
-
 # =============================================================================
-# DISCORD CHANNEL DATABASE SYSTEM
-# =============================================================================
-
-def create_database_channel(guild_id):
-    """Create private database channel for persistent storage"""
-    try:
-        # Get guild info
-        guild = get_guild_info(guild_id)
-        if not guild:
-            return None
-        
-        # Create channel data
-        channel_data = {
-            "name": "database-logs",
-            "type": 0,  # Text channel
-            "topic": "Goblin Hut Database - DO NOT DELETE",
-            "parent_id": None,
-            "permission_overwrites": [
-                {
-                    "id": guild_id,  # @everyone
-                    "type": 0,
-                    "allow": "0",
-                    "deny": "1024"  # Deny VIEW_CHANNEL
-                },
-                {
-                    "id": DISCORD_CLIENT_ID,  # Bot
-                    "type": 2,
-                    "allow": "3072",  # VIEW_CHANNEL + SEND_MESSAGES
-                    "deny": "0"
-                }
-            ]
-        }
-        
-        # Add admin permissions if ADMIN_ROLE_ID is set
-        if ADMIN_ROLE_ID:
-            channel_data["permission_overwrites"].append({
-                "id": ADMIN_ROLE_ID,
-                "type": 0,
-                "allow": "3072",  # VIEW_CHANNEL + SEND_MESSAGES
-                "deny": "0"
-            })
-        
-        # Create the channel
-        channel = create_guild_channel(guild_id, channel_data)
-        if not channel:
-            return None
-        
-        # Send initial message
-        welcome_message = {
-            "content": "# 🗃️ Goblin Hut Database Channel\n\nThis channel stores all bot data in case of server restart. **DO NOT DELETE THIS CHANNEL.**\n\nLast backup: " + datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S UTC"),
-            "embeds": []
-        }
-        
-        discord_api_request(f"/channels/{channel['id']}/messages", "POST", welcome_message)
-        
-        logger.info(f"Created database channel: {channel['id']}")
-        return channel['id']
-        
-    except Exception as e:
-        logger.error(f"Error creating database channel: {e}")
-        return None
-
-def save_data_to_channel(data, data_type="backup"):
-    """Save data to database channel"""
-    global DATABASE_CHANNEL_ID
-    
-    if not DATABASE_CHANNEL_ID:
-        logger.warning("No database channel ID set, skipping data save")
-        return False
-    
-    try:
-        # Create checksum
-        data_str = json.dumps(data, sort_keys=True)
-        checksum = hashlib.md5(data_str.encode()).hexdigest()
-        
-        # Create backup message
-        timestamp = datetime.utcnow().isoformat()
-        backup_data = {
-            "type": data_type,
-            "timestamp": timestamp,
-            "checksum": checksum,
-            "data": data
-        }
-        
-        # Convert to base64 for Discord message
-        backup_json = json.dumps(backup_data)
-        backup_b64 = base64.b64encode(backup_json.encode()).decode()
-        
-        # Split if too long (Discord has 2000 char limit)
-        if len(backup_b64) > 1900:
-            chunks = [backup_b64[i:i+1900] for i in range(0, len(backup_b64), 1900)]
-            for i, chunk in enumerate(chunks):
-                message = {
-                    "content": f"```BACKUP:{data_type}:{timestamp}:{checksum}:PART{i+1}/{len(chunks)}\n{chunk}```"
-                }
-                discord_api_request(f"/channels/{DATABASE_CHANNEL_ID}/messages", "POST", message)
-                time.sleep(0.5)
-        else:
-            message = {
-                "content": f"```BACKUP:{data_type}:{timestamp}:{checksum}\n{backup_b64}```"
-            }
-            discord_api_request(f"/channels/{DATABASE_CHANNEL_ID}/messages", "POST", message)
-        
-        logger.info(f"Saved {data_type} data to channel {DATABASE_CHANNEL_ID}")
-        return True
-        
-    except Exception as e:
-        logger.error(f"Error saving data to channel: {e}")
-        return False
-
-def load_data_from_channel():
-    """Load data from database channel"""
-    global DATABASE_CHANNEL_ID
-    
-    if not DATABASE_CHANNEL_ID:
-        logger.warning("No database channel ID set, skipping data load")
-        return None
-    
-    try:
-        # Get messages from channel
-        messages = discord_api_request(f"/channels/{DATABASE_CHANNEL_ID}/messages?limit=50")
-        if not messages:
-            logger.warning("No messages found in database channel")
-            return None
-        
-        # Find backup messages
-        backup_messages = []
-        for msg in messages:
-            content = msg.get('content', '')
-            if content.startswith('```BACKUP:') and content.endswith('```'):
-                # Extract backup data
-                lines = content.strip('```').split('\n')
-                if len(lines) >= 2:
-                    header = lines[0]
-                    backup_b64 = lines[1]
-                    
-                    # Parse header
-                    parts = header.split(':')
-                    if len(parts) >= 4:
-                        data_type = parts[1]
-                        timestamp = parts[2]
-                        checksum = parts[3]
-                        
-                        # Decode data
-                        try:
-                            backup_json = base64.b64decode(backup_b64).decode()
-                            backup_data = json.loads(backup_json)
-                            backup_messages.append({
-                                'timestamp': timestamp,
-                                'type': data_type,
-                                'data': backup_data.get('data', {})
-                            })
-                        except Exception as e:
-                            logger.error(f"Error decoding backup: {e}")
-                            continue
-        
-        # Sort by timestamp (newest first)
-        backup_messages.sort(key=lambda x: x['timestamp'], reverse=True)
-        
-        if backup_messages:
-            logger.info(f"Loaded {len(backup_messages)} backup messages from channel")
-            return backup_messages[0]['data']  # Return most recent backup
-        
-        return None
-        
-    except Exception as e:
-        logger.error(f"Error loading data from channel: {e}")
-        return None
-
-def backup_database():
-    """Backup entire database to channel"""
-    try:
-        conn = get_db_connection()
-        
-        # Get all data from database
-        data = {
-            'players': [],
-            'tickets': [],
-            'matches': [],
-            'match_stats': [],
-            'admin_channels': [],
-            'backup_time': datetime.utcnow().isoformat()
-        }
-        
-        # Get players
-        players = conn.execute('SELECT * FROM players').fetchall()
-        for player in players:
-            data['players'].append(dict(player))
-        
-        # Get tickets
-        tickets = conn.execute('SELECT * FROM tickets').fetchall()
-        for ticket in tickets:
-            data['tickets'].append(dict(ticket))
-        
-        # Get matches
-        matches = conn.execute('SELECT * FROM matches').fetchall()
-        for match in matches:
-            data['matches'].append(dict(match))
-        
-        # Get match stats
-        match_stats = conn.execute('SELECT * FROM match_stats').fetchall()
-        for stat in match_stats:
-            data['match_stats'].append(dict(stat))
-        
-        # Get admin channels
-        admin_channels = conn.execute('SELECT * FROM admin_channels').fetchall()
-        for channel in admin_channels:
-            data['admin_channels'].append(dict(channel))
-        
-        conn.close()
-        
-        # Save to channel
-        success = save_data_to_channel(data, "full_backup")
-        if success:
-            logger.info("Database backed up to channel")
-            return True
-        else:
-            logger.error("Failed to backup database to channel")
-            return False
-            
-    except Exception as e:
-        logger.error(f"Error backing up database: {e}")
-        return False
-
-def restore_database():
-    """Restore database from channel backup"""
-    try:
-        data = load_data_from_channel()
-        if not data:
-            logger.warning("No backup data found to restore")
-            return False
-        
-        conn = get_db_connection()
-        cursor = conn.cursor()
-        
-        # Clear existing data
-        cursor.execute('DELETE FROM players')
-        cursor.execute('DELETE FROM tickets')
-        cursor.execute('DELETE FROM matches')
-        cursor.execute('DELETE FROM match_stats')
-        cursor.execute('DELETE FROM admin_channels')
-        
-        # Restore players
-        for player in data.get('players', []):
-            cursor.execute('''
-                INSERT INTO players 
-                (id, discord_id, discord_name, discord_avatar, in_game_name, 
-                 api_key, server_id, key_created, last_used, total_kills, 
-                 total_deaths, wins, losses, prestige, is_admin, created_at)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-            ''', (
-                player.get('id'), player.get('discord_id'), player.get('discord_name'),
-                player.get('discord_avatar'), player.get('in_game_name'), player.get('api_key'),
-                player.get('server_id'), player.get('key_created'), player.get('last_used'),
-                player.get('total_kills'), player.get('total_deaths'), player.get('wins'),
-                player.get('losses'), player.get('prestige'), player.get('is_admin'),
-                player.get('created_at')
-            ))
-        
-        # Restore tickets
-        for ticket in data.get('tickets', []):
-            cursor.execute('''
-                INSERT INTO tickets 
-                (id, ticket_id, discord_id, discord_name, issue, category,
-                 channel_id, status, assigned_to, created_at, resolved_at)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-            ''', (
-                ticket.get('id'), ticket.get('ticket_id'), ticket.get('discord_id'),
-                ticket.get('discord_name'), ticket.get('issue'), ticket.get('category'),
-                ticket.get('channel_id'), ticket.get('status'), ticket.get('assigned_to'),
-                ticket.get('created_at'), ticket.get('resolved_at')
-            ))
-        
-        # Restore matches
-        for match in data.get('matches', []):
-            cursor.execute('''
-                INSERT INTO matches 
-                (id, match_id, team1_players, team2_players, team1_score,
-                 team2_score, status, winner, started_at, ended_at)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-            ''', (
-                match.get('id'), match.get('match_id'), match.get('team1_players'),
-                match.get('team2_players'), match.get('team1_score'), match.get('team2_score'),
-                match.get('status'), match.get('winner'), match.get('started_at'),
-                match.get('ended_at')
-            ))
-        
-        # Restore match stats
-        for stat in data.get('match_stats', []):
-            cursor.execute('''
-                INSERT INTO match_stats 
-                (id, match_id, player_id, player_name, team, kills, deaths, assists)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-            ''', (
-                stat.get('id'), stat.get('match_id'), stat.get('player_id'),
-                stat.get('player_name'), stat.get('team'), stat.get('kills'),
-                stat.get('deaths'), stat.get('assists')
-            ))
-        
-        # Restore admin channels
-        for channel in data.get('admin_channels', []):
-            cursor.execute('''
-                INSERT INTO admin_channels 
-                (id, channel_id, guild_id, created_by_id, created_by_name, channel_type, created_at)
-                VALUES (?, ?, ?, ?, ?, ?, ?)
-            ''', (
-                channel.get('id'), channel.get('channel_id'), channel.get('guild_id'),
-                channel.get('created_by_id'), channel.get('created_by_name'),
-                channel.get('channel_type'), channel.get('created_at')
-            ))
-        
-        conn.commit()
-        conn.close()
-        
-        logger.info(f"Database restored from backup: {len(data.get('players', []))} players, {len(data.get('tickets', []))} tickets, {len(data.get('admin_channels', []))} admin channels")
-        return True
-        
-    except Exception as e:
-        logger.error(f"Error restoring database: {e}")
-        return False
-
-# =============================================================================
-# SERVER PING - KEEP ALIVE
-# =============================================================================
-
-def ping_server():
-    """Ping the server every 5 minutes to keep it alive"""
-    try:
-        response = requests.get(f"http://localhost:{port}/health", timeout=10)
-        logger.info(f"Server ping response: {response.status_code}")
-    except Exception as e:
-        logger.error(f"Server ping failed: {e}")
-
-def start_ping_scheduler():
-    """Start the ping scheduler"""
-    def scheduler():
-        while True:
-            time.sleep(300)  # 5 minutes
-            ping_server()
-    
-    thread = threading.Thread(target=scheduler, daemon=True)
-    thread.start()
-    logger.info("Server ping scheduler started")
-
-# =============================================================================
-# DISCORD API HELPERS
+# DISCORD API HELPERS - COMPLETE
 # =============================================================================
 
 def discord_api_request(endpoint, method="GET", data=None):
@@ -492,10 +98,6 @@ def get_guild_member(guild_id, user_id):
     """Get guild member info"""
     return discord_api_request(f"/guilds/{guild_id}/members/{user_id}")
 
-def get_guild_roles(guild_id):
-    """Get all roles for a guild"""
-    return discord_api_request(f"/guilds/{guild_id}/roles")
-
 def get_guild_info(guild_id):
     """Get guild information"""
     return discord_api_request(f"/guilds/{guild_id}")
@@ -508,401 +110,251 @@ def delete_channel(channel_id):
     """Delete a channel"""
     return discord_api_request(f"/channels/{channel_id}", "DELETE")
 
-def create_channel_invite(channel_id, max_age=0):
-    """Create channel invite"""
-    data = {"max_age": max_age, "max_uses": 0, "temporary": False}
-    return discord_api_request(f"/channels/{channel_id}/invites", "POST", data)
-
 def get_discord_user(user_id):
-    """Get Discord user info including avatar"""
+    """Get Discord user info"""
     return discord_api_request(f"/users/{user_id}")
 
-def get_discord_avatar_url(user_id, avatar_hash, size=256):
-    """Get Discord avatar URL"""
-    if not avatar_hash:
-        return None
-    return f"https://cdn.discordapp.com/avatars/{user_id}/{avatar_hash}.png?size={size}"
+# =============================================================================
+# KEY DATABASE CHANNEL SYSTEM - COMPLETE
+# =============================================================================
 
-def is_user_admin_in_guild(guild_id, user_id):
-    """Check if user has admin/manage permissions in guild"""
+def create_key_database_channel(guild_id):
+    """Create private channel to store key-user information"""
     try:
-        member = get_guild_member(guild_id, user_id)
-        if not member:
-            return False
-        
+        # Get guild info
         guild = get_guild_info(guild_id)
-        if guild and guild.get('owner_id') == user_id:
-            return True
+        if not guild:
+            return None
         
-        # Check if user has ADMIN_ROLE_ID
-        if ADMIN_ROLE_ID and ADMIN_ROLE_ID in member.get('roles', []):
-            return True
+        # Create channel data
+        channel_data = {
+            "name": "key-database",
+            "type": 0,  # Text channel
+            "topic": "Key Database - DO NOT DELETE",
+            "parent_id": None,
+            "permission_overwrites": [
+                {
+                    "id": guild_id,  # @everyone
+                    "type": 0,
+                    "allow": "0",
+                    "deny": "1024"  # Deny VIEW_CHANNEL
+                },
+                {
+                    "id": DISCORD_CLIENT_ID,  # Bot
+                    "type": 2,
+                    "allow": "3072",  # VIEW_CHANNEL + SEND_MESSAGES
+                    "deny": "0"
+                }
+            ]
+        }
         
-        roles = get_guild_roles(guild_id)
-        if not roles:
-            return False
+        # Create the channel
+        channel = create_guild_channel(guild_id, channel_data)
+        if not channel:
+            return None
         
-        member_roles = member.get('roles', [])
-        for role_id in member_roles:
-            for role in roles:
-                if role['id'] == role_id:
-                    permissions = int(role.get('permissions', 0))
-                    if permissions & 0x8 or permissions & 0x20 or permissions & 0x10000000:
-                        return True
+        # Send initial message
+        welcome_message = {
+            "content": "# 🔑 Key Database Channel\n\nThis channel stores all API key registrations.\n**DO NOT DELETE THIS CHANNEL.**\n\nFormat: `KEY|DiscordID|DiscordName|InGameName|Date|APIKey`",
+            "embeds": []
+        }
         
-        return False
+        discord_api_request(f"/channels/{channel['id']}/messages", "POST", welcome_message)
+        
+        logger.info(f"Created key database channel: {channel['id']}")
+        return channel['id']
         
     except Exception as e:
-        logger.error(f"Error checking admin status: {e}")
+        logger.error(f"Error creating key database channel: {e}")
+        return None
+
+def save_key_to_channel(discord_id, discord_name, in_game_name, api_key):
+    """Save key registration to channel"""
+    global KEY_DATABASE_CHANNEL_ID
+    
+    if not KEY_DATABASE_CHANNEL_ID:
+        logger.warning("No key database channel ID set")
+        return False
+    
+    try:
+        # Format: KEY|DiscordID|DiscordName|InGameName|Date|APIKey
+        timestamp = datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S")
+        message = f"KEY|{discord_id}|{discord_name}|{in_game_name}|{timestamp}|{api_key}"
+        
+        # Send to channel
+        discord_api_request(f"/channels/{KEY_DATABASE_CHANNEL_ID}/messages", "POST", {
+            "content": f"```{message}```"
+        })
+        
+        logger.info(f"Saved key registration to channel: {discord_name} -> {in_game_name}")
+        return True
+        
+    except Exception as e:
+        logger.error(f"Error saving key to channel: {e}")
         return False
 
 # =============================================================================
-# WEBHOOK FUNCTIONS
+# WEBHOOK FUNCTIONS - COMPLETE
 # =============================================================================
 
-def send_ticket_webhook(ticket_id, user_name, user_id, category, issue, channel_id=None, action="created"):
-    """Send webhook notification for ticket events"""
-    if not TICKET_WEBHOOK:
+def send_webhook(webhook_url, embed, username="Goblin Hut Bot"):
+    """Send embed to webhook"""
+    if not webhook_url:
         return
     
     try:
-        category_info = next((c for c in TICKET_CATEGORIES if c["name"] == category), TICKET_CATEGORIES[-1])
-        
-        embed = {
-            "title": f"Ticket {action.capitalize()}",
-            "description": f"**Ticket ID:** `{ticket_id}`\n**User:** {user_name} (<@{user_id}>)\n**Category:** {category}\n**Issue:** {issue[:500]}",
-            "color": category_info['color'],
-            "timestamp": datetime.utcnow().isoformat(),
-            "footer": {"text": f"Ticket {action}"}
-        }
-        
-        if channel_id and action == "created":
-            embed["fields"] = [{
-                "name": "Channel",
-                "value": f"<#{channel_id}>",
-                "inline": True
-            }]
-        
         data = {
             "embeds": [embed],
-            "username": "Goblin Hut Ticket System",
+            "username": username,
             "avatar_url": "https://i.imgur.com/Lg9YqZm.png"
         }
         
-        response = requests.post(TICKET_WEBHOOK, json=data, timeout=5)
+        response = requests.post(webhook_url, json=data, timeout=5)
         if response.status_code not in [200, 204]:
             logger.error(f"Webhook failed: {response.status_code}")
             
     except Exception as e:
         logger.error(f"Webhook error: {e}")
 
-def send_score_update(match_id, team1_score, team2_score, team1_players, team2_players):
-    """Send score update to webhook"""
-    if not SCORE_WEBHOOK:
-        return
+def send_registration_webhook(discord_id, discord_name, in_game_name, api_key):
+    """Send registration to webhook"""
+    embed = {
+        "title": "🔑 New Registration",
+        "color": 0x00ff9d,
+        "fields": [
+            {"name": "Discord User", "value": f"{discord_name} (<@{discord_id}>)", "inline": True},
+            {"name": "In-Game Name", "value": in_game_name, "inline": True},
+            {"name": "API Key", "value": f"`{api_key}`", "inline": False},
+            {"name": "Date", "value": datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S"), "inline": True}
+        ],
+        "timestamp": datetime.utcnow().isoformat(),
+        "footer": {"text": "Goblin Hut Registration"}
+    }
     
-    try:
-        embed = {
-            "title": "🏆 Score Update",
-            "description": f"Match ID: `{match_id}`",
-            "color": 0x00ff9d,
-            "fields": [
-                {
-                    "name": "Team 1",
-                    "value": f"Score: **{team1_score}**\nPlayers: {', '.join(team1_players)}",
-                    "inline": True
-                },
-                {
-                    "name": "Team 2",
-                    "value": f"Score: **{team2_score}**\nPlayers: {', '.join(team2_players)}",
-                    "inline": True
-                }
-            ],
-            "timestamp": datetime.utcnow().isoformat(),
-            "footer": {"text": "Goblin Hut Score Tracker"}
-        }
-        
-        data = {
-            "embeds": [embed],
-            "username": "Goblin Hut Score Tracker",
-            "avatar_url": "https://i.imgur.com/Lg9YqZm.png"
-        }
-        
-        response = requests.post(SCORE_WEBHOOK, json=data, timeout=5)
-        if response.status_code not in [200, 204]:
-            logger.error(f"Score webhook failed: {response.status_code}")
-            
-    except Exception as e:
-        logger.error(f"Score webhook error: {e}")
+    send_webhook(REGISTRATION_WEBHOOK, embed, "Goblin Hut Registration")
 
-def send_match_start(match_id, team1_players, team2_players):
-    """Send match start notification"""
-    if not SCORE_WEBHOOK:
-        return
+def send_login_webhook(discord_name, in_game_name, ip_address=None):
+    """Send login to webhook"""
+    embed = {
+        "title": "🚪 User Login",
+        "color": 0x9d00ff,
+        "fields": [
+            {"name": "User", "value": f"{discord_name} ({in_game_name})", "inline": True},
+            {"name": "Time", "value": datetime.utcnow().strftime("%H:%M:%S"), "inline": True}
+        ],
+        "timestamp": datetime.utcnow().isoformat(),
+        "footer": {"text": "Goblin Hut Login"}
+    }
     
-    try:
-        embed = {
-            "title": "🎮 Match Started",
-            "description": f"Match ID: `{match_id}`",
-            "color": 0x9d00ff,
-            "fields": [
-                {
-                    "name": "Team 1",
-                    "value": f"Players: {', '.join(team1_players)}",
-                    "inline": True
-                },
-                {
-                    "name": "Team 2",
-                    "value": f"Players: {', '.join(team2_players)}",
-                    "inline": True
-                }
-            ],
-            "timestamp": datetime.utcnow().isoformat(),
-            "footer": {"text": "Goblin Hut Score Tracker"}
-        }
-        
-        data = {
-            "embeds": [embed],
-            "username": "Goblin Hut Score Tracker",
-            "avatar_url": "https://i.imgur.com/Lg9YqZm.png"
-        }
-        
-        response = requests.post(SCORE_WEBHOOK, json=data, timeout=5)
-        if response.status_code not in [200, 204]:
-            logger.error(f"Match start webhook failed: {response.status_code}")
-            
-    except Exception as e:
-        logger.error(f"Match start webhook error: {e}")
+    if ip_address:
+        embed["fields"].append({"name": "IP", "value": ip_address, "inline": True})
+    
+    send_webhook(LOGIN_WEBHOOK, embed, "Goblin Hut Login")
 
-def send_match_end(match_id, winner_team, team1_score, team2_score, team1_players, team2_players):
-    """Send match end notification"""
-    if not SCORE_WEBHOOK:
-        return
+def send_ticket_webhook(ticket_id, user_name, user_id, category, issue, action="created"):
+    """Send ticket event to webhook"""
+    category_info = next((c for c in TICKET_CATEGORIES if c["name"] == category), TICKET_CATEGORIES[-1])
     
-    try:
-        embed = {
-            "title": "🏁 Match Ended",
-            "description": f"Match ID: `{match_id}`\n**Winner: {winner_team}**",
-            "color": 0xffd700,
-            "fields": [
-                {
-                    "name": "Team 1",
-                    "value": f"Score: **{team1_score}**\nPlayers: {', '.join(team1_players)}",
-                    "inline": True
-                },
-                {
-                    "name": "Team 2",
-                    "value": f"Score: **{team2_score}**\nPlayers: {', '.join(team2_players)}",
-                    "inline": True
-                }
-            ],
-            "timestamp": datetime.utcnow().isoformat(),
-            "footer": {"text": "Goblin Hut Score Tracker"}
-        }
-        
-        data = {
-            "embeds": [embed],
-            "username": "Goblin Hut Score Tracker",
-            "avatar_url": "https://i.imgur.com/Lg9YqZm.png"
-        }
-        
-        response = requests.post(SCORE_WEBHOOK, json=data, timeout=5)
-        if response.status_code not in [200, 204]:
-            logger.error(f"Match end webhook failed: {response.status_code}")
-            
-    except Exception as e:
-        logger.error(f"Match end webhook error: {e}")
+    embed = {
+        "title": f"🎫 Ticket {action.capitalize()}",
+        "description": f"**Ticket ID:** `{ticket_id}`\n**User:** {user_name} (<@{user_id}>)\n**Category:** {category}\n**Issue:** {issue[:200]}",
+        "color": category_info['color'],
+        "timestamp": datetime.utcnow().isoformat(),
+        "footer": {"text": f"Ticket {action}"}
+    }
+    
+    send_webhook(TICKET_WEBHOOK, embed, "Goblin Hut Tickets")
+
+def send_stats_webhook(total_players, total_kills, total_games):
+    """Send stats to webhook"""
+    embed = {
+        "title": "📊 Bot Statistics",
+        "color": 0xffd700,
+        "fields": [
+            {"name": "Total Players", "value": str(total_players), "inline": True},
+            {"name": "Total Kills", "value": str(total_kills), "inline": True},
+            {"name": "Total Games", "value": str(total_games), "inline": True},
+            {"name": "Bot Status", "value": "🟢 Online" if bot_active else "🔴 Offline", "inline": True}
+        ],
+        "timestamp": datetime.utcnow().isoformat(),
+        "footer": {"text": "Updated every hour"}
+    }
+    
+    send_webhook(STATS_WEBHOOK, embed, "Goblin Hut Stats")
+
+def send_score_webhook(match_id, team1_score, team2_score, action="update"):
+    """Send score to webhook"""
+    if action == "start":
+        title = "🎮 Match Started"
+        color = 0x9d00ff
+    elif action == "end":
+        title = "🏁 Match Ended"
+        color = 0xffd700
+    else:
+        title = "🏆 Score Update"
+        color = 0x00ff9d
+    
+    embed = {
+        "title": title,
+        "description": f"Match ID: `{match_id}`",
+        "color": color,
+        "fields": [
+            {"name": "Team 1", "value": f"Score: **{team1_score}**", "inline": True},
+            {"name": "Team 2", "value": f"Score: **{team2_score}**", "inline": True}
+        ],
+        "timestamp": datetime.utcnow().isoformat(),
+        "footer": {"text": "Goblin Hut Score Tracker"}
+    }
+    
+    send_webhook(SCORE_WEBHOOK, embed, "Goblin Hut Scores")
 
 # =============================================================================
-# ADMIN CHANNEL SYSTEM (SIMILAR TO TICKET)
-# =============================================================================
-
-def create_admin_channel(guild_id, user_id, user_name, channel_type="admin-chat"):
-    """Create admin channel similar to ticket system"""
-    try:
-        # Get guild info
-        guild = get_guild_info(guild_id)
-        if not guild:
-            return None
-        
-        # Generate channel ID similar to ticket
-        short_id = f"admin-{int(time.time()) % 10000:04d}"
-        channel_name = short_id
-        
-        # Create channel data - SIMILAR TO TICKET CHANNEL
-        channel_data = {
-            "name": channel_name,
-            "type": 0,  # Text channel
-            "topic": f"Admin {channel_type} channel for {guild['name']}",
-            "parent_id": None,
-            "permission_overwrites": [
-                {
-                    "id": guild_id,  # @everyone
-                    "type": 0,
-                    "allow": "0",
-                    "deny": "1024"  # Deny VIEW_CHANNEL
-                },
-                {
-                    "id": user_id,  # Creator
-                    "type": 1,
-                    "allow": "3072",  # VIEW_CHANNEL + SEND_MESSAGES
-                    "deny": "0"
-                }
-            ]
-        }
-        
-        # Add bot permission
-        channel_data["permission_overwrites"].append({
-            "id": DISCORD_CLIENT_ID,  # Bot
-            "type": 2,
-            "allow": "3072",  # VIEW_CHANNEL + SEND_MESSAGES
-            "deny": "0"
-        })
-        
-        # Add admin role if configured
-        if ADMIN_ROLE_ID:
-            channel_data["permission_overwrites"].append({
-                "id": ADMIN_ROLE_ID,
-                "type": 0,
-                "allow": "3072",  # VIEW_CHANNEL + SEND_MESSAGES
-                "deny": "0"
-            })
-        
-        # Create the channel
-        channel = create_guild_channel(guild_id, channel_data)
-        if not channel:
-            return None
-        
-        # Create embed with close button - SIMILAR TO TICKET
-        embed = {
-            "title": f"🔧 Admin Channel",
-            "description": f"This channel is for admin communication only.",
-            "color": 0x00ff9d,
-            "fields": [
-                {"name": "Created By", "value": f"<@{user_id}> ({user_name})", "inline": True},
-                {"name": "Created", "value": f"<t:{int(time.time())}:R>", "inline": True},
-                {"name": "Type", "value": channel_type.replace('-', ' ').title(), "inline": True},
-                {"name": "Channel", "value": f"<#{channel['id']}>", "inline": True}
-            ],
-            "footer": {"text": "Click the button below to close this channel"},
-            "timestamp": datetime.utcnow().isoformat()
-        }
-        
-        # Create close button component - SIMILAR TO TICKET
-        components = {
-            "type": 1,
-            "components": [
-                {
-                    "type": 2,
-                    "style": 4,  # Danger style (red)
-                    "label": "Close Channel",
-                    "custom_id": f"close_admin_{channel['id']}"
-                }
-            ]
-        }
-        
-        welcome_message = {
-            "content": f"<@{user_id}> Welcome to the admin channel!",
-            "embeds": [embed],
-            "components": [components]
-        }
-        
-        message_response = discord_api_request(f"/channels/{channel['id']}/messages", "POST", welcome_message)
-        
-        logger.info(f"Created admin channel: {channel['id']}")
-        return channel['id']
-        
-    except Exception as e:
-        logger.error(f"Error creating admin channel: {e}")
-        return None
-
-def close_admin_channel(channel_id, closed_by):
-    """Close admin channel - similar to closing tickets"""
-    try:
-        # Delete the channel
-        delete_result = delete_channel(channel_id)
-        
-        if delete_result:
-            # Remove from database
-            conn = get_db_connection()
-            conn.execute('DELETE FROM admin_channels WHERE channel_id = ?', (channel_id,))
-            conn.commit()
-            conn.close()
-            
-            logger.info(f"Admin channel {channel_id} deleted by {closed_by}")
-            return True
-        else:
-            logger.error(f"Failed to delete admin channel {channel_id}")
-            return False
-        
-    except Exception as e:
-        logger.error(f"Error closing admin channel: {e}")
-        return False
-
-# =============================================================================
-# TICKET SYSTEM
+# TICKET SYSTEM - COMPLETE
 # =============================================================================
 
 def create_ticket_channel(guild_id, user_id, user_name, ticket_id, issue, category):
-    """Create private ticket channel with shorter name"""
+    """Create private ticket channel"""
     try:
-        # Get guild info
         guild = get_guild_info(guild_id)
         if not guild:
             return None
         
-        # Create shorter channel name (ticket-1234)
-        short_id = ticket_id.split('-')[1][:4]  # Get first 4 chars of timestamp
+        short_id = ticket_id.split('-')[1][:4]
         channel_name = f"ticket-{short_id}"
         
-        # Find category for ticket type
         category_info = next((c for c in TICKET_CATEGORIES if c["name"] == category), TICKET_CATEGORIES[-1])
         
-        # Create channel data
         channel_data = {
             "name": channel_name,
-            "type": 0,  # Text channel
+            "type": 0,
             "topic": f"{issue[:50]}...",
             "parent_id": None,
             "permission_overwrites": [
                 {
-                    "id": guild_id,  # @everyone
+                    "id": guild_id,
                     "type": 0,
                     "allow": "0",
-                    "deny": "1024"  # Deny VIEW_CHANNEL
+                    "deny": "1024"
                 },
                 {
-                    "id": user_id,  # Ticket creator
+                    "id": user_id,
                     "type": 1,
-                    "allow": "3072",  # VIEW_CHANNEL + SEND_MESSAGES
+                    "allow": "3072",
+                    "deny": "0"
+                },
+                {
+                    "id": DISCORD_CLIENT_ID,
+                    "type": 2,
+                    "allow": "3072",
                     "deny": "0"
                 }
             ]
         }
         
-        # Add admin role if configured
-        if ADMIN_ROLE_ID:
-            channel_data["permission_overwrites"].append({
-                "id": ADMIN_ROLE_ID,
-                "type": 0,
-                "allow": "3072",  # VIEW_CHANNEL + SEND_MESSAGES
-                "deny": "0"
-            })
-        
-        # Add ticket creator permission to manage their own channel
-        channel_data["permission_overwrites"].append({
-            "id": user_id,
-            "type": 1,
-            "allow": "3072",  # VIEW_CHANNEL + SEND_MESSAGES
-            "deny": "0"
-        })
-        
-        # Create the channel
         channel = create_guild_channel(guild_id, channel_data)
         if not channel:
             return None
         
-        # Create embed with close button
         embed = {
             "title": f"Ticket #{ticket_id}",
             "description": issue,
@@ -910,20 +362,18 @@ def create_ticket_channel(guild_id, user_id, user_name, ticket_id, issue, catego
             "fields": [
                 {"name": "Created By", "value": f"<@{user_id}> ({user_name})", "inline": True},
                 {"name": "Created", "value": f"<t:{int(time.time())}:R>", "inline": True},
-                {"name": "Category", "value": category, "inline": True},
-                {"name": "Channel", "value": f"<#{channel['id']}>", "inline": True}
+                {"name": "Category", "value": category, "inline": True}
             ],
-            "footer": {"text": "Click the button below to close this ticket"},
+            "footer": {"text": "Use /close to close this ticket"},
             "timestamp": datetime.utcnow().isoformat()
         }
         
-        # Create close button component
         components = {
             "type": 1,
             "components": [
                 {
                     "type": 2,
-                    "style": 4,  # Danger style (red)
+                    "style": 4,
                     "label": "Close Ticket",
                     "custom_id": f"close_ticket_{ticket_id}"
                 }
@@ -936,10 +386,10 @@ def create_ticket_channel(guild_id, user_id, user_name, ticket_id, issue, catego
             "components": [components]
         }
         
-        message_response = discord_api_request(f"/channels/{channel['id']}/messages", "POST", welcome_message)
+        discord_api_request(f"/channels/{channel['id']}/messages", "POST", welcome_message)
         
-        # Send webhook notification
-        send_ticket_webhook(ticket_id, user_name, user_id, category, issue, channel['id'], "created")
+        # Send webhook
+        send_ticket_webhook(ticket_id, user_name, user_id, category, issue, "created")
         
         return channel['id']
         
@@ -948,31 +398,28 @@ def create_ticket_channel(guild_id, user_id, user_name, ticket_id, issue, catego
         return None
 
 def close_ticket_channel(channel_id, ticket_id, closed_by):
-    """Close ticket channel, delete it, and update database"""
+    """Close ticket channel"""
     try:
-        # Get ticket info for webhook
         conn = get_db_connection()
         ticket = conn.execute(
             'SELECT * FROM tickets WHERE ticket_id = ?',
             (ticket_id,)
         ).fetchone()
         
-        # Update database
         conn.execute('''
             UPDATE tickets 
-            SET status = "closed", resolved_at = CURRENT_TIMESTAMP, assigned_to = ?
+            SET status = "closed", resolved_at = CURRENT_TIMESTAMP
             WHERE ticket_id = ?
-        ''', (closed_by, ticket_id))
+        ''', (ticket_id,))
         conn.commit()
         conn.close()
         
-        # Delete the channel instead of renaming
         delete_result = delete_channel(channel_id)
         
-        # Send webhook notification
+        # Send webhook
         if ticket:
             send_ticket_webhook(ticket_id, ticket['discord_name'], ticket['discord_id'], 
-                              ticket['category'], ticket['issue'], None, "closed and deleted")
+                              ticket['category'], ticket['issue'], "closed")
         
         return True if delete_result else False
         
@@ -981,68 +428,7 @@ def close_ticket_channel(channel_id, ticket_id, closed_by):
         return False
 
 # =============================================================================
-# DELETE CHANNEL FUNCTION
-# =============================================================================
-
-def delete_channel_by_id(channel_id, user_id, guild_id):
-    """Delete any channel with permission check"""
-    try:
-        # Check if user has permission
-        can_delete = False
-        
-        # Check if user is admin
-        if is_user_admin_in_guild(guild_id, user_id):
-            can_delete = True
-        
-        # Check if user is bot owner
-        if not can_delete:
-            guild = get_guild_info(guild_id)
-            if guild and guild.get('owner_id') == user_id:
-                can_delete = True
-        
-        if can_delete:
-            delete_result = delete_channel(channel_id)
-            if delete_result:
-                # Check and remove from appropriate tables
-                conn = get_db_connection()
-                
-                # Check if it's a ticket
-                ticket = conn.execute('SELECT * FROM tickets WHERE channel_id = ?', (channel_id,)).fetchone()
-                if ticket:
-                    conn.execute('UPDATE tickets SET status = "deleted" WHERE channel_id = ?', (channel_id,))
-                
-                # Check if it's an admin channel
-                conn.execute('DELETE FROM admin_channels WHERE channel_id = ?', (channel_id,))
-                
-                conn.commit()
-                conn.close()
-                
-                logger.info(f"Channel {channel_id} deleted by user {user_id}")
-                return True
-            else:
-                logger.error(f"Failed to delete channel {channel_id}")
-                return False
-        else:
-            logger.warning(f"User {user_id} attempted to delete channel {channel_id} without permission")
-            return False
-            
-    except Exception as e:
-        logger.error(f"Error in delete_channel_by_id: {e}")
-        return False
-
-# =============================================================================
-# SECURE KEY GENERATION
-# =============================================================================
-
-def generate_secure_key():
-    """Generate strong API key with consistent format: GOB- + 20 uppercase alphanumeric chars"""
-    alphabet = string.ascii_uppercase + string.digits  # Only uppercase and digits
-    # GOB- + 20 characters = total 24 characters
-    key = 'GOB-' + ''.join(secrets.choice(alphabet) for _ in range(20))
-    return key
-
-# =============================================================================
-# DATABASE SETUP
+# DATABASE SETUP - COMPLETE
 # =============================================================================
 
 def init_db():
@@ -1051,7 +437,7 @@ def init_db():
         conn = sqlite3.connect(DATABASE)
         cursor = conn.cursor()
         
-        # Players table with CHECK constraint for API key length
+        # Players table
         cursor.execute('''
             CREATE TABLE IF NOT EXISTS players (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -1059,7 +445,7 @@ def init_db():
                 discord_name TEXT,
                 discord_avatar TEXT,
                 in_game_name TEXT,
-                api_key TEXT UNIQUE CHECK(LENGTH(api_key) = 24),
+                api_key TEXT UNIQUE,
                 server_id TEXT,
                 key_created TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                 last_used TIMESTAMP,
@@ -1068,12 +454,11 @@ def init_db():
                 wins INTEGER DEFAULT 0,
                 losses INTEGER DEFAULT 0,
                 prestige INTEGER DEFAULT 0,
-                is_admin BOOLEAN DEFAULT 0,
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             )
         ''')
         
-        # Tickets table with category
+        # Tickets table
         cursor.execute('''
             CREATE TABLE IF NOT EXISTS tickets (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -1084,13 +469,12 @@ def init_db():
                 category TEXT DEFAULT 'Other',
                 channel_id TEXT,
                 status TEXT DEFAULT 'open',
-                assigned_to TEXT,
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                 resolved_at TIMESTAMP
             )
         ''')
         
-        # Matches table for score tracking
+        # Matches table
         cursor.execute('''
             CREATE TABLE IF NOT EXISTS matches (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -1106,33 +490,6 @@ def init_db():
             )
         ''')
         
-        # Player stats per match
-        cursor.execute('''
-            CREATE TABLE IF NOT EXISTS match_stats (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                match_id TEXT,
-                player_id TEXT,
-                player_name TEXT,
-                team INTEGER,
-                kills INTEGER DEFAULT 0,
-                deaths INTEGER DEFAULT 0,
-                assists INTEGER DEFAULT 0
-            )
-        ''')
-        
-        # Admin channels table
-        cursor.execute('''
-            CREATE TABLE IF NOT EXISTS admin_channels (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                channel_id TEXT UNIQUE,
-                guild_id TEXT,
-                created_by_id TEXT,
-                created_by_name TEXT,
-                channel_type TEXT DEFAULT 'admin-chat',
-                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-            )
-        ''')
-        
         conn.commit()
         conn.close()
         logger.info("Database initialized")
@@ -1144,26 +501,15 @@ def get_db_connection():
     return conn
 
 # =============================================================================
-# KEY VALIDATION - FIXED VERSION
+# KEY VALIDATION - COMPLETE
 # =============================================================================
 
 def validate_api_key(api_key):
-    """Validate API key with proper format and length checking"""
+    """Validate API key"""
     if not api_key:
-        logger.warning("No API key provided")
         return None
     
-    # Clean the API key
     api_key = api_key.strip().upper()
-    
-    # Validate format: GOB- followed by exactly 20 alphanumeric characters
-    pattern = r'^GOB-[A-Z0-9]{20}$'
-    
-    if not re.match(pattern, api_key):
-        logger.warning(f"Invalid API key format: {api_key} (Length: {len(api_key)})")
-        return None
-    
-    logger.info(f"Validating key: {api_key}, Length: {len(api_key)}, Pattern match: OK")
     
     conn = get_db_connection()
     try:
@@ -1180,12 +526,10 @@ def validate_api_key(api_key):
             )
             conn.commit()
             
-            # Convert to dict for session storage
+            # Convert to dict
             player_dict = {key: player[key] for key in player.keys()}
-            logger.info(f"API key validated successfully for user: {player_dict.get('in_game_name')}")
             return player_dict
         else:
-            logger.warning(f"API key not found in database: {api_key}")
             return None
     except Exception as e:
         logger.error(f"Error validating API key: {e}")
@@ -1193,57 +537,12 @@ def validate_api_key(api_key):
     finally:
         conn.close()
 
-def fix_existing_keys():
-    """Fix existing keys to correct format"""
-    conn = get_db_connection()
-    players = conn.execute('SELECT id, api_key FROM players').fetchall()
-    
-    fixed_count = 0
-    for player in players:
-        old_key = player['api_key']
-        if old_key and (not old_key.startswith('GOB-') or len(old_key) != 24):
-            new_key = generate_secure_key()
-            logger.info(f"Fixing key for player {player['id']}: {old_key} -> {new_key}")
-            conn.execute('UPDATE players SET api_key = ? WHERE id = ?', 
-                       (new_key, player['id']))
-            fixed_count += 1
-    
-    if fixed_count > 0:
-        conn.commit()
-        logger.info(f"Fixed {fixed_count} API keys")
-    
-    conn.close()
-    return fixed_count
-
-def test_key_validation():
-    """Test key validation for debugging"""
-    test_keys = [
-        "GOB-ABCDEFGHIJKLMNOPQRST",  # Valid - 20 chars after GOB-
-        "GOB-ABCDEFGHIJKLMNOPQRS",    # Invalid - 19 chars
-        "GOB-ABCDEFGHIJKLMNOPQRSTU",  # Invalid - 21 chars
-        "gob-ABCDEFGHIJKLMNOPQRST",   # Valid after uppercase conversion
-        "GOB-ABCDEFGHIJKLMNOPQR",     # Invalid - 18 chars
-        "GOB-1234567890ABCDEFGHIJ",   # Valid - mix of numbers and letters
-        "WRONG-ABCDEFGHIJKLMNOPQR",   # Invalid prefix
-        "GOB-ABCDEFGHIJKLMNOPQRSTUVWXYZ",  # Too long
-        "GOB-ABCDEFGHIJ1234567890",   # Valid - numbers
-        "",                           # Empty
-        None,                         # None
-    ]
-    
-    print("\n" + "="*60)
-    print("API KEY VALIDATION TEST")
-    print("="*60)
-    
-    for key in test_keys:
-        result = validate_api_key(key)
-        length = len(key) if key else 0
-        print(f"Key: {str(key):40} Length: {length:2} Valid: {bool(result)}")
-    
-    print("="*60 + "\n")
+def generate_api_key():
+    """Generate API key"""
+    return f"GOB-{''.join(random.choices(string.ascii_uppercase + string.digits, k=20))}"
 
 # =============================================================================
-# DISCORD BOT FUNCTIONS
+# DISCORD BOT FUNCTIONS - COMPLETE
 # =============================================================================
 
 def test_discord_token():
@@ -1286,7 +585,7 @@ def register_commands():
         },
         {
             "name": "register",
-            "description": "Register and get API key (use once)",
+            "description": "Register and get API key",
             "type": 1,
             "options": [
                 {
@@ -1340,31 +639,7 @@ def register_commands():
         },
         {
             "name": "setup",
-            "description": "Setup admin/database channels (Admin only)",
-            "type": 1,
-            "options": [
-                {
-                    "name": "type",
-                    "description": "Channel type to create",
-                    "type": 3,
-                    "required": False,
-                    "choices": [
-                        {"name": "Admin Chat", "value": "admin-chat"},
-                        {"name": "Admin Voice", "value": "admin-voice"},
-                        {"name": "Database", "value": "database"},
-                        {"name": "Logs", "value": "logs"}
-                    ]
-                }
-            ]
-        },
-        {
-            "name": "backup",
-            "description": "Backup database to channel (Admin only)",
-            "type": 1
-        },
-        {
-            "name": "restore",
-            "description": "Restore database from backup (Admin only)",
+            "description": "Setup key database channel",
             "type": 1
         }
     ]
@@ -1390,31 +665,29 @@ def register_commands():
         return False
 
 # =============================================================================
-# SCORE TRACKING FUNCTIONS
+# SCORE TRACKING - COMPLETE
 # =============================================================================
+
+score_matches = {}
 
 def start_match(team1_players, team2_players):
     """Start a new match"""
     match_id = f"MATCH-{int(time.time()) % 1000000:06d}"
     
-    # Store in memory
     score_matches[match_id] = {
         'team1': {'players': team1_players, 'score': 0},
-        'team2': {'players': team2_players, 'score': 0},
-        'started_at': datetime.utcnow().isoformat()
+        'team2': {'players': team2_players, 'score': 0}
     }
     
-    # Store in database
     conn = get_db_connection()
     conn.execute('''
-        INSERT INTO matches (match_id, team1_players, team2_players, status)
-        VALUES (?, ?, ?, 'ongoing')
+        INSERT INTO matches (match_id, team1_players, team2_players)
+        VALUES (?, ?, ?)
     ''', (match_id, ','.join(team1_players), ','.join(team2_players)))
     conn.commit()
     conn.close()
     
-    # Send webhook
-    send_match_start(match_id, team1_players, team2_players)
+    send_score_webhook(match_id, 0, 0, "start")
     
     return match_id
 
@@ -1426,7 +699,6 @@ def update_score(match_id, team1_score, team2_score):
     score_matches[match_id]['team1']['score'] = team1_score
     score_matches[match_id]['team2']['score'] = team2_score
     
-    # Update database
     conn = get_db_connection()
     conn.execute('''
         UPDATE matches 
@@ -1436,14 +708,7 @@ def update_score(match_id, team1_score, team2_score):
     conn.commit()
     conn.close()
     
-    # Send webhook
-    send_score_update(
-        match_id,
-        team1_score,
-        team2_score,
-        score_matches[match_id]['team1']['players'],
-        score_matches[match_id]['team2']['players']
-    )
+    send_score_webhook(match_id, team1_score, team2_score, "update")
     
     return True
 
@@ -1456,15 +721,8 @@ def end_match(match_id):
     team1_score = match_data['team1']['score']
     team2_score = match_data['team2']['score']
     
-    # Determine winner
-    if team1_score > team2_score:
-        winner = "Team 1"
-    elif team2_score > team1_score:
-        winner = "Team 2"
-    else:
-        winner = "Draw"
+    winner = "Team 1" if team1_score > team2_score else "Team 2" if team2_score > team1_score else "Draw"
     
-    # Update database
     conn = get_db_connection()
     conn.execute('''
         UPDATE matches 
@@ -1474,87 +732,35 @@ def end_match(match_id):
     conn.commit()
     conn.close()
     
-    # Send webhook
-    send_match_end(
-        match_id,
-        winner,
-        team1_score,
-        team2_score,
-        match_data['team1']['players'],
-        match_data['team2']['players']
-    )
+    send_score_webhook(match_id, team1_score, team2_score, "end")
     
-    # Remove from memory
     del score_matches[match_id]
     
     return True
 
-def get_match_stats(match_id):
-    """Get match statistics"""
-    conn = get_db_connection()
-    match = conn.execute(
-        'SELECT * FROM matches WHERE match_id = ?',
-        (match_id,)
-    ).fetchone()
-    
-    stats = None
-    if match:
-        stats = {
-            'match_id': match['match_id'],
-            'team1_players': match['team1_players'].split(','),
-            'team2_players': match['team2_players'].split(','),
-            'team1_score': match['team1_score'],
-            'team2_score': match['team2_score'],
-            'status': match['status'],
-            'winner': match['winner'],
-            'started_at': match['started_at'],
-            'ended_at': match['ended_at']
-        }
-    
-    conn.close()
-    return stats
-
 # =============================================================================
-# DISCORD INTERACTIONS
+# DISCORD INTERACTIONS - COMPLETE
 # =============================================================================
 
 @app.route('/interactions', methods=['POST'])
 def interactions():
     """Handle Discord slash commands"""
-    # Log the incoming request
-    logger.info("Received interaction request")
-    
-    # Check if Discord signature verification is required
-    signature = request.headers.get('X-Signature-Ed25519')
-    timestamp = request.headers.get('X-Signature-Timestamp')
-    
-    # If signature headers are present, verify them
-    if signature and timestamp and DISCORD_PUBLIC_KEY:
-        if not verify_discord_signature(request):
-            logger.error("Invalid Discord signature")
-            return jsonify({"error": "Invalid signature"}), 401
-    
     data = request.get_json()
     
     # Handle PING
     if data.get('type') == 1:
-        logger.info("Responding to PING")
         return jsonify({"type": 1})
     
-    # Handle button clicks (type 3)
+    # Handle button clicks
     if data.get('type') == 3:
         custom_id = data.get('data', {}).get('custom_id', '')
         user_id = data.get('member', {}).get('user', {}).get('id')
         channel_id = data.get('channel_id')
-        guild_id = data.get('guild_id')
-        
-        logger.info(f"Button click: {custom_id} by {user_id}")
         
         # CLOSE TICKET BUTTON
         if custom_id.startswith('close_ticket_'):
             ticket_id = custom_id.replace('close_ticket_', '')
             
-            # Get ticket info
             conn = get_db_connection()
             ticket = conn.execute(
                 'SELECT * FROM tickets WHERE ticket_id = ?',
@@ -1562,116 +768,51 @@ def interactions():
             ).fetchone()
             conn.close()
             
-            if ticket:
-                # Check if user has permission to close
-                can_close = False
-                if str(user_id) == str(ticket['discord_id']):
-                    can_close = True
-                elif ADMIN_ROLE_ID:
-                    # Check if user has admin role
-                    member = get_guild_member(guild_id, user_id)
-                    if member and ADMIN_ROLE_ID in member.get('roles', []):
-                        can_close = True
-                
-                if can_close:
-                    success = close_ticket_channel(channel_id, ticket_id, user_id)
-                    if success:
-                        return jsonify({
-                            "type": 4,
-                            "data": {
-                                "content": f"Ticket {ticket_id} has been closed and channel deleted.",
-                                "flags": 64
-                            }
-                        })
-                    else:
-                        return jsonify({
-                            "type": 4,
-                            "data": {
-                                "content": f"Ticket marked as closed but could not delete channel.",
-                                "flags": 64
-                            }
-                        })
-                else:
-                    return jsonify({
-                        "type": 4,
-                        "data": {
-                            "content": "You don't have permission to close this ticket.",
-                            "flags": 64
-                        }
-                    })
-        
-        # CLOSE ADMIN CHANNEL BUTTON
-        elif custom_id.startswith('close_admin_'):
-            channel_to_close = custom_id.replace('close_admin_', '')
-            
-            # Check if user has permission
-            can_close = False
-            if is_user_admin_in_guild(guild_id, user_id):
-                can_close = True
-            
-            if can_close:
-                success = close_admin_channel(channel_to_close, user_id)
+            if ticket and str(user_id) == str(ticket['discord_id']):
+                success = close_ticket_channel(channel_id, ticket_id, user_id)
                 if success:
                     return jsonify({
                         "type": 4,
                         "data": {
-                            "content": f"Admin channel has been closed and deleted.",
+                            "content": f"Ticket {ticket_id} has been closed.",
                             "flags": 64
                         }
                     })
-                else:
-                    return jsonify({
-                        "type": 4,
-                        "data": {
-                            "content": f"Could not delete channel.",
-                            "flags": 64
-                        }
-                    })
-            else:
-                return jsonify({
-                    "type": 4,
-                    "data": {
-                        "content": "You don't have permission to close admin channels.",
-                        "flags": 64
-                    }
-                })
+            
+            return jsonify({
+                "type": 4,
+                "data": {
+                    "content": "You don't have permission to close this ticket.",
+                    "flags": 64
+                }
+            })
         
-        return jsonify({"type": 6})  # ACK for other button clicks
+        return jsonify({"type": 6})
     
-    # Handle slash commands (type 2)
+    # Handle slash commands
     if data.get('type') == 2:
         command = data.get('data', {}).get('name')
         user_id = data.get('member', {}).get('user', {}).get('id')
         user_name = data.get('member', {}).get('user', {}).get('global_name', 'Unknown')
         server_id = data.get('guild_id', 'DM')
         
-        logger.info(f"Command received: {command} from {user_name} ({user_id})")
+        logger.info(f"Command: {command} from {user_name}")
         
         # PING COMMAND
         if command == 'ping':
-            # 30% chance for toxic response
-            if random.random() < 0.3:
-                response = random.choice(TOXIC_PING_RESPONSES)
-            else:
-                response = random.choice(NORMAL_PING_RESPONSES)
-            
-            logger.info(f"Responding to ping: {response}")
             return jsonify({
                 "type": 4,
                 "data": {
-                    "content": response
+                    "content": random.choice(PING_RESPONSES)
                 }
             })
         
-        # REGISTER COMMAND - FIXED TO PREVENT REUSE
+        # REGISTER COMMAND
         elif command == 'register':
             options = data.get('data', {}).get('options', [])
             in_game_name = options[0].get('value', 'Unknown') if options else 'Unknown'
             
-            logger.info(f"Registering user {user_name} with name {in_game_name}")
-            
             conn = get_db_connection()
-            
             existing = conn.execute(
                 'SELECT * FROM players WHERE discord_id = ?',
                 (user_id,)
@@ -1680,51 +821,39 @@ def interactions():
             if existing:
                 api_key = existing['api_key']
                 conn.close()
-                logger.info(f"User {user_name} already registered")
                 return jsonify({
                     "type": 4,
                     "data": {
-                        "content": (
-                            f"You are already registered as **{existing['in_game_name']}**\n\n"
-                            f"**Your API Key:**\n```{api_key}```\n\n"
-                            f"**Dashboard:** {request.host_url}\n"
-                            f"Use `/key` to see your key again anytime"
-                        ),
+                        "content": f"You are already registered as **{existing['in_game_name']}**\n\n**Your API Key:**\n```{api_key}```\n\n**Dashboard:** {request.host_url}\nUse this key to login to your dashboard.",
                         "flags": 64
                     }
                 })
             
-            is_admin = is_user_admin_in_guild(server_id, user_id)
-            api_key = generate_secure_key()
+            # Generate key
+            api_key = generate_api_key()
             
-            # Get Discord avatar
+            # Get Discord user info
             discord_user = get_discord_user(user_id)
             discord_avatar = discord_user.get('avatar') if discord_user else None
             
-            # Insert new player
             conn.execute('''
                 INSERT INTO players 
-                (discord_id, discord_name, discord_avatar, in_game_name, api_key, server_id, is_admin)
-                VALUES (?, ?, ?, ?, ?, ?, ?)
-            ''', (user_id, user_name, discord_avatar, in_game_name, api_key, server_id, 1 if is_admin else 0))
-            
+                (discord_id, discord_name, discord_avatar, in_game_name, api_key, server_id)
+                VALUES (?, ?, ?, ?, ?, ?)
+            ''', (user_id, user_name, discord_avatar, in_game_name, api_key, server_id))
             conn.commit()
             conn.close()
             
-            admin_note = "\n**Admin access detected** - You have additional privileges." if is_admin else ""
-            logger.info(f"User {user_name} registered successfully with key {api_key}")
+            # Save to key database channel
+            save_key_to_channel(user_id, user_name, in_game_name, api_key)
+            
+            # Send webhooks
+            send_registration_webhook(user_id, user_name, in_game_name, api_key)
             
             return jsonify({
                 "type": 4,
                 "data": {
-                    "content": (
-                        f"**Registration Successful!**{admin_note}\n\n"
-                        f"**Name:** {in_game_name}\n"
-                        f"**API Key:**\n```{api_key}```\n\n"
-                        f"**Dashboard:** {request.host_url}\n"
-                        f"Login to access your full dashboard\n\n"
-                        f"**Note:** You can only register once. Use `/key` to see your key again."
-                    ),
+                    "content": f"**Registration Successful!**\n\n**Name:** {in_game_name}\n**API Key:**\n```{api_key}```\n\n**Dashboard:** {request.host_url}\nUse this key to login to your dashboard.",
                     "flags": 64
                 }
             })
@@ -1737,9 +866,6 @@ def interactions():
             
             ticket_id = f"T-{int(time.time()) % 10000:04d}"
             
-            logger.info(f"Creating ticket {ticket_id} for user {user_name}: {issue[:50]}...")
-            
-            # Create ticket in database
             conn = get_db_connection()
             conn.execute('''
                 INSERT INTO tickets 
@@ -1748,7 +874,6 @@ def interactions():
             ''', (ticket_id, user_id, user_name, issue, category))
             conn.commit()
             
-            # Create private channel
             channel_id = create_ticket_channel(server_id, user_id, user_name, ticket_id, issue, category)
             
             if channel_id:
@@ -1759,8 +884,6 @@ def interactions():
                 conn.commit()
                 conn.close()
                 
-                logger.info(f"Ticket {ticket_id} created with channel {channel_id}")
-                
                 return jsonify({
                     "type": 4,
                     "data": {
@@ -1770,7 +893,6 @@ def interactions():
                 })
             else:
                 conn.close()
-                logger.warning(f"Ticket {ticket_id} created but channel creation failed")
                 return jsonify({
                     "type": 4,
                     "data": {
@@ -1782,9 +904,7 @@ def interactions():
         # CLOSE COMMAND
         elif command == 'close':
             channel_id = data.get('channel_id')
-            logger.info(f"Close command in channel {channel_id} by {user_name}")
             
-            # Check if user is in a ticket channel
             conn = get_db_connection()
             ticket = conn.execute(
                 'SELECT * FROM tickets WHERE channel_id = ? AND status = "open"',
@@ -1793,7 +913,6 @@ def interactions():
             conn.close()
             
             if not ticket:
-                logger.info(f"No open ticket found in channel {channel_id}")
                 return jsonify({
                     "type": 4,
                     "data": {
@@ -1802,15 +921,13 @@ def interactions():
                     }
                 })
             
-            # Close the ticket and delete channel
-            logger.info(f"Closing ticket {ticket['ticket_id']}")
             success = close_ticket_channel(channel_id, ticket['ticket_id'], user_id)
             
             if success:
                 return jsonify({
                     "type": 4,
                     "data": {
-                        "content": f"Ticket {ticket['ticket_id']} has been closed and channel deleted.",
+                        "content": f"Ticket {ticket['ticket_id']} has been closed.",
                         "flags": 64
                     }
                 })
@@ -1818,15 +935,13 @@ def interactions():
                 return jsonify({
                     "type": 4,
                     "data": {
-                        "content": f"Ticket marked as closed but could not delete channel.",
+                        "content": "Failed to close ticket.",
                         "flags": 64
                     }
                 })
         
-        # PROFILE COMMAND - FIXED VERSION
+        # PROFILE COMMAND
         elif command == 'profile':
-            logger.info(f"Profile command from {user_name}")
-            
             conn = get_db_connection()
             player = conn.execute(
                 'SELECT * FROM players WHERE discord_id = ?',
@@ -1835,7 +950,6 @@ def interactions():
             conn.close()
             
             if not player:
-                logger.info(f"User {user_name} not registered")
                 return jsonify({
                     "type": 4,
                     "data": {
@@ -1844,9 +958,8 @@ def interactions():
                     }
                 })
             
-            # Calculate stats
             total_kills = player['total_kills'] or 0
-            total_deaths = player['total_deaths'] or 1
+            total_deaths = max(player['total_deaths'] or 1, 1)
             wins = player['wins'] or 0
             losses = player['losses'] or 0
             
@@ -1854,33 +967,19 @@ def interactions():
             total_games = wins + losses
             win_rate = (wins / total_games * 100) if total_games > 0 else 0
             
-            # Format date
-            created_at = player['created_at']
-            try:
-                created_date = datetime.strptime(created_at, '%Y-%m-%d %H:%M:%S')
-                timestamp = int(created_date.timestamp())
-            except:
-                timestamp = int(time.time())
-            
             embed = {
                 "title": f"{player['in_game_name']}'s Profile",
                 "color": 0x9d00ff,
                 "fields": [
                     {"name": "In-Game Name", "value": f"`{player['in_game_name']}`", "inline": True},
                     {"name": "Prestige", "value": f"**{player['prestige']}**", "inline": True},
-                    {"name": "Registered", "value": f"<t:{timestamp}:R>", "inline": True},
-                    {"name": "K/D Ratio", "value": f"**{kd:.2f}** ({total_kills}/{total_deaths})", "inline": True},
-                    {"name": "Win Rate", "value": f"**{win_rate:.1f}%** ({wins}/{total_games})", "inline": True},
-                    {"name": "Games Played", "value": f"**{total_games}**", "inline": True},
-                    {"name": "API Key", "value": f"`{player['api_key'][:8]}...`", "inline": False},
-                    {"name": "Dashboard", "value": f"[Click Here]({request.host_url})", "inline": True},
-                    {"name": "Status", "value": "**Admin**" if player['is_admin'] else "**Player**", "inline": True}
+                    {"name": "K/D Ratio", "value": f"**{kd:.2f}**", "inline": True},
+                    {"name": "Win Rate", "value": f"**{win_rate:.1f}%**", "inline": True},
+                    {"name": "Games", "value": f"**{total_games}**", "inline": True},
+                    {"name": "Dashboard", "value": f"[Click Here]({request.host_url})", "inline": True}
                 ],
-                "footer": {"text": "Use /key to see full API key"},
-                "timestamp": datetime.utcnow().isoformat()
+                "footer": {"text": f"Registered: {player['created_at'][:10]}"}
             }
-            
-            logger.info(f"Showing profile for {player['in_game_name']}")
             
             return jsonify({
                 "type": 4,
@@ -1892,8 +991,6 @@ def interactions():
         
         # KEY COMMAND
         elif command == 'key':
-            logger.info(f"Key command from {user_name}")
-            
             conn = get_db_connection()
             player = conn.execute(
                 'SELECT * FROM players WHERE discord_id = ?',
@@ -1902,7 +999,6 @@ def interactions():
             conn.close()
             
             if not player:
-                logger.info(f"User {user_name} not registered")
                 return jsonify({
                     "type": 4,
                     "data": {
@@ -1911,127 +1007,49 @@ def interactions():
                     }
                 })
             
-            logger.info(f"Showing key for {player['in_game_name']}")
-            
             return jsonify({
                 "type": 4,
                 "data": {
-                    "content": (
-                        f"**Your API Key**\n\n"
-                        f"```{player['api_key']}```\n\n"
-                        f"**Dashboard:** {request.host_url}\n"
-                        f"Use this key to login to your dashboard"
-                    ),
+                    "content": f"**Your API Key**\n\n```{player['api_key']}```\n\n**Dashboard:** {request.host_url}",
                     "flags": 64
                 }
             })
         
-        # SETUP COMMAND - CREATES ADMIN OR DATABASE CHANNEL
+        # SETUP COMMAND
         elif command == 'setup':
-            # Check if user is admin
-            is_admin = is_user_admin_in_guild(server_id, user_id)
-            if not is_admin:
+            global KEY_DATABASE_CHANNEL_ID
+            
+            if KEY_DATABASE_CHANNEL_ID:
                 return jsonify({
                     "type": 4,
                     "data": {
-                        "content": "You need admin privileges to setup channels.",
+                        "content": f"Key database channel already exists: <#{KEY_DATABASE_CHANNEL_ID}>",
                         "flags": 64
                     }
                 })
             
-            options = data.get('data', {}).get('options', [])
-            channel_type = options[0].get('value', 'admin-chat') if options else 'admin-chat'
+            channel_id = create_key_database_channel(server_id)
             
-            logger.info(f"Setup command by admin {user_name} for {channel_type}")
-            
-            if channel_type == 'database':
-                # Create database channel
-                channel_id = create_database_channel(server_id)
+            if channel_id:
+                KEY_DATABASE_CHANNEL_ID = channel_id
                 
-                if channel_id:
-                    global DATABASE_CHANNEL_ID
-                    DATABASE_CHANNEL_ID = channel_id
-                    
-                    # Backup current database
-                    backup_success = backup_database()
-                    
-                    return jsonify({
-                        "type": 4,
-                        "data": {
-                            "content": f"**Database Setup Complete**\n\n**Channel:** <#{channel_id}>\n**Backup:** {'Successful' if backup_success else 'Failed'}\n\nThis channel will store all bot data for persistence. DO NOT DELETE IT.",
-                            "flags": 64
-                        }
-                    })
-                else:
-                    return jsonify({
-                        "type": 4,
-                        "data": {
-                            "content": "Failed to create database channel. Check bot permissions.",
-                            "flags": 64
-                        }
-                    })
-            else:
-                # Create admin channel (similar to ticket)
-                channel_id = create_admin_channel(server_id, user_id, user_name, channel_type)
+                # Save all existing keys to channel
+                conn = get_db_connection()
+                players = conn.execute('SELECT discord_id, discord_name, in_game_name, api_key FROM players').fetchall()
+                conn.close()
                 
-                if channel_id:
-                    # Store in database
-                    conn = get_db_connection()
-                    conn.execute('''
-                        INSERT INTO admin_channels 
-                        (channel_id, guild_id, created_by_id, created_by_name, channel_type)
-                        VALUES (?, ?, ?, ?, ?)
-                    ''', (channel_id, server_id, user_id, user_name, channel_type))
-                    conn.commit()
-                    conn.close()
-                    
-                    return jsonify({
-                        "type": 4,
-                        "data": {
-                            "content": f"**Admin Channel Created**\n\n**Type:** {channel_type.replace('-', ' ').title()}\n**Channel:** <#{channel_id}>\n\nThis channel is visible only to admins and the bot.",
-                            "flags": 64
-                        }
-                    })
-                else:
-                    return jsonify({
-                        "type": 4,
-                        "data": {
-                            "content": "Failed to create admin channel. Check bot permissions.",
-                            "flags": 64
-                    }
-                })
-        
-        # BACKUP COMMAND
-        elif command == 'backup':
-            # Check if user is admin
-            is_admin = is_user_admin_in_guild(server_id, user_id)
-            if not is_admin:
+                for player in players:
+                    save_key_to_channel(
+                        player['discord_id'],
+                        player['discord_name'],
+                        player['in_game_name'],
+                        player['api_key']
+                    )
+                
                 return jsonify({
                     "type": 4,
                     "data": {
-                        "content": "You need admin privileges to backup the database.",
-                        "flags": 64
-                    }
-                })
-            
-            logger.info(f"Backup command by admin {user_name}")
-            
-            if not DATABASE_CHANNEL_ID:
-                return jsonify({
-                    "type": 4,
-                    "data": {
-                        "content": "No database channel set up. Use `/setup database` first.",
-                        "flags": 64
-                    }
-                })
-            
-            backup_success = backup_database()
-            
-            if backup_success:
-                return jsonify({
-                    "type": 4,
-                    "data": {
-                        "content": f"**Database Backup Complete**\n\nBackup saved to <#{DATABASE_CHANNEL_ID}>",
+                        "content": f"**Key Database Channel Created**\n\n**Channel:** <#{channel_id}>\n\nThis channel will store all API key registrations. DO NOT DELETE IT.\n\nExisting keys have been saved to the channel.",
                         "flags": 64
                     }
                 })
@@ -2039,56 +1057,11 @@ def interactions():
                 return jsonify({
                     "type": 4,
                     "data": {
-                        "content": "Failed to backup database. Check logs for details.",
-                        "flags": 64
-                    }
-                })
-        
-        # RESTORE COMMAND
-        elif command == 'restore':
-            # Check if user is admin
-            is_admin = is_user_admin_in_guild(server_id, user_id)
-            if not is_admin:
-                return jsonify({
-                    "type": 4,
-                    "data": {
-                        "content": "You need admin privileges to restore the database.",
-                        "flags": 64
-                    }
-                })
-            
-            logger.info(f"Restore command by admin {user_name}")
-            
-            if not DATABASE_CHANNEL_ID:
-                return jsonify({
-                    "type": 4,
-                    "data": {
-                        "content": "No database channel set up. Use `/setup database` first.",
-                        "flags": 64
-                    }
-                })
-            
-            restore_success = restore_database()
-            
-            if restore_success:
-                return jsonify({
-                    "type": 4,
-                    "data": {
-                        "content": "**Database Restore Complete**\n\nDatabase has been restored from the latest backup.",
-                        "flags": 64
-                    }
-                })
-            else:
-                return jsonify({
-                    "type": 4,
-                    "data": {
-                        "content": "Failed to restore database. Check logs for details.",
+                        "content": "Failed to create key database channel. Check bot permissions.",
                         "flags": 64
                     }
                 })
     
-    # Unknown command type
-    logger.warning(f"Unknown interaction type: {data.get('type')}")
     return jsonify({
         "type": 4,
         "data": {
@@ -2097,71 +1070,13 @@ def interactions():
         }
     })
 
-def verify_discord_signature(request):
-    """Verify Discord request signature"""
-    try:
-        signature = request.headers.get('X-Signature-Ed25519')
-        timestamp = request.headers.get('X-Signature-Timestamp')
-        body = request.get_data().decode('utf-8')
-        
-        if not signature or not timestamp:
-            logger.error("Missing signature headers")
-            return False
-        
-        if not DISCORD_PUBLIC_KEY:
-            logger.error("DISCORD_PUBLIC_KEY not set")
-            return False
-        
-        # Import nacl if available
-        try:
-            import nacl.signing
-            import nacl.exceptions
-            
-            message = f"{timestamp}{body}".encode('utf-8')
-            signature_bytes = bytes.fromhex(signature)
-            verify_key = nacl.signing.VerifyKey(bytes.fromhex(DISCORD_PUBLIC_KEY))
-            verify_key.verify(message, signature_bytes)
-            
-            logger.info("Discord signature verified")
-            return True
-            
-        except ImportError:
-            logger.warning("nacl library not installed, skipping signature verification")
-            return True  # Skip verification if nacl not installed
-        except Exception as e:
-            logger.error(f"Signature verification failed: {e}")
-            return False
-            
-    except Exception as e:
-        logger.error(f"Error in verify_discord_signature: {e}")
-        return False
-
 # =============================================================================
-# SESSION MANAGEMENT
-# =============================================================================
-
-@app.before_request
-def before_request():
-    """Check session before each request"""
-    if request.endpoint not in ['home', 'api_validate_key', 'health', 'api_stats', 'api_leaderboard', 'static', 'interactions']:
-        if 'user_key' not in session:
-            return redirect(url_for('home'))
-        
-        # Re-validate session on dashboard access
-        if request.endpoint == 'dashboard':
-            user_data = validate_api_key(session.get('user_key'))
-            if not user_data:
-                session.clear()
-                return redirect(url_for('home'))
-            session['user_data'] = user_data
-
-# =============================================================================
-# WEB INTERFACE WITH SUBTLE ANIMATIONS
+# WEB INTERFACE - COMPLETE
 # =============================================================================
 
 @app.route('/')
 def home():
-    """Home page - Goblin Hut"""
+    """Home page"""
     if 'user_key' in session:
         user_data = validate_api_key(session['user_key'])
         if user_data:
@@ -2576,7 +1491,7 @@ def home():
                            class="key-input" 
                            id="apiKey" 
                            placeholder="GOB-XXXXXXXXXXXXXXXXXXXX"
-                           pattern="GOB-[A-Z0-9]{20}"
+                           pattern="GOB-[A-Z0-9]{23}"
                            title="Format: GOB- followed by 20 uppercase letters/numbers"
                            autocomplete="off">
                     
@@ -2786,7 +1701,7 @@ def home():
 
 @app.route('/api/validate-key', methods=['POST'])
 def api_validate_key():
-    """Validate API key - FIXED VERSION"""
+    """Validate API key"""
     data = request.get_json()
     api_key = data.get('api_key', '').strip().upper()
     
@@ -2800,7 +1715,13 @@ def api_validate_key():
         session['user_key'] = api_key
         session['user_data'] = user_data
         session.permanent = True
-        session.modified = True
+        
+        # Send login webhook
+        send_login_webhook(
+            user_data.get('discord_name', 'Unknown'),
+            user_data.get('in_game_name', 'Unknown'),
+            request.remote_addr
+        )
         
         return jsonify({"valid": True, "user": user_data.get('in_game_name')})
     else:
@@ -2810,13 +1731,11 @@ def api_validate_key():
 def logout():
     """Logout"""
     session.clear()
-    response = make_response(redirect(url_for('home')))
-    response.set_cookie('session', '', expires=0)
-    return response
+    return redirect(url_for('home'))
 
 @app.route('/dashboard')
 def dashboard():
-    """Profile Dashboard - Goblin Hut"""
+    """Profile Dashboard"""
     if 'user_key' not in session:
         return redirect(url_for('home'))
     
@@ -2838,55 +1757,15 @@ def dashboard():
     total_games = wins + losses
     win_rate = (wins / total_games * 100) if total_games > 0 else 0
     
-    # Format dates
-    from datetime import datetime as dt
-    created_at = user_data.get('created_at', '')
-    if created_at:
-        try:
-            created_date = dt.strptime(created_at, '%Y-%m-%d %H:%M:%S')
-            created_str = created_date.strftime('%b %d, %Y')
-            days_ago = (dt.now() - created_date).days
-        except:
-            created_str = "Unknown"
-            days_ago = 0
-    else:
-        created_str = "Unknown"
-        days_ago = 0
-    
-    is_admin = user_data.get('is_admin', 0)
-    
-    # Get Discord avatar URL
-    discord_avatar = user_data.get('discord_avatar')
+    # Get avatar URL
     avatar_url = None
-    if discord_avatar:
-        avatar_url = get_discord_avatar_url(user_data['discord_id'], discord_avatar, 256)
+    if user_data.get('discord_avatar'):
+        avatar_url = f"https://cdn.discordapp.com/avatars/{user_data['discord_id']}/{user_data['discord_avatar']}.png?size=256"
     
-    # Get open tickets for this user
-    conn = get_db_connection()
-    tickets = conn.execute(
-        'SELECT * FROM tickets WHERE discord_id = ? AND status = "open" ORDER BY created_at DESC LIMIT 3',
-        (user_data['discord_id'],)
-    ).fetchall()
-    conn.close()
-    
-    # Build tickets HTML
-    tickets_html = ''
-    for ticket in tickets:
-        category_info = next((c for c in TICKET_CATEGORIES if c["name"] == ticket['category']), TICKET_CATEGORIES[-1])
-        color_hex = f"#{hex(category_info['color'])[2:].zfill(6)}"
-        tickets_html += f'<div class="ticket-card"><div class="ticket-header"><div class="ticket-title"><strong>TICKET-{ticket["ticket_id"]}</strong></div><span class="status-open">OPEN</span></div><p class="ticket-issue">{ticket["issue"][:100]}...</p><div class="ticket-footer"><span class="ticket-category" style="color: {color_hex};">{ticket["category"]}</span><span class="ticket-date">{ticket["created_at"][:10]}</span></div></div>'
-    
-    if not tickets_html:
-        tickets_html = '<div class="no-tickets"><p>No open tickets</p></div>'
-    
-    # Avatar HTML
-    avatar_html = f'<img src="{avatar_url}" alt="Avatar" style="width: 100px; height: 100px; border-radius: 50%; border: 3px solid #9d00ff;">' if avatar_url else '<div class="avatar">?</div>'
-    
-    # Build the HTML response
     html = f'''<!DOCTYPE html>
 <html>
 <head>
-    <title>Goblin Hut - Profile</title>
+    <title>Goblin Hut - Dashboard</title>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <style>
@@ -2901,7 +1780,6 @@ def dashboard():
             background: #0a0015;
             color: #fff;
             min-height: 100vh;
-            overflow-x: hidden;
         }}
         
         .background-glow {{
@@ -2948,6 +1826,13 @@ def dashboard():
             display: flex;
             align-items: center;
             gap: 20px;
+        }}
+        
+        .user-avatar {{
+            width: 50px;
+            height: 50px;
+            border-radius: 50%;
+            border: 2px solid #9d00ff;
         }}
         
         .user-name {{
@@ -3030,12 +1915,13 @@ def dashboard():
             justify-content: center;
             font-size: 2.5rem;
             color: white;
-            animation: rotate 20s linear infinite;
         }}
         
-        @keyframes rotate {{
-            from {{ transform: rotate(0deg); }}
-            to {{ transform: rotate(360deg); }}
+        .avatar img {{
+            width: 100%;
+            height: 100%;
+            border-radius: 50%;
+            object-fit: cover;
         }}
         
         .profile-info h2 {{
@@ -3125,87 +2011,6 @@ def dashboard():
             box-shadow: 0 10px 20px rgba(157, 0, 255, 0.2);
         }}
         
-        .admin-btn {{
-            background: linear-gradient(45deg, #00ff9d, #00d4ff);
-        }}
-        
-        .tickets-section {{
-            background: rgba(25, 10, 50, 0.8);
-            backdrop-filter: blur(10px);
-            border-radius: 20px;
-            padding: 40px;
-            border: 1px solid rgba(157, 0, 255, 0.2);
-            box-shadow: 0 10px 30px rgba(0, 0, 0, 0.2);
-            animation: slideUp 0.8s ease-out 0.4s both;
-        }}
-        
-        .tickets-section h3 {{
-            font-size: 1.8rem;
-            margin-bottom: 30px;
-            color: #00d4ff;
-        }}
-        
-        .tickets-grid {{
-            display: grid;
-            grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
-            gap: 20px;
-        }}
-        
-        .ticket-card {{
-            background: rgba(20, 5, 40, 0.9);
-            border-radius: 15px;
-            padding: 25px;
-            border: 1px solid rgba(157, 0, 255, 0.2);
-            transition: all 0.3s;
-        }}
-        
-        .ticket-card:hover {{
-            transform: translateY(-5px);
-            border-color: rgba(0, 212, 255, 0.4);
-            box-shadow: 0 10px 20px rgba(0, 212, 255, 0.1);
-        }}
-        
-        .ticket-header {{
-            display: flex;
-            justify-content: space-between;
-            align-items: center;
-            margin-bottom: 15px;
-        }}
-        
-        .status-open {{
-            color: #00ff9d;
-            font-weight: bold;
-            font-size: 0.8rem;
-            padding: 5px 12px;
-            background: rgba(0, 255, 157, 0.1);
-            border-radius: 15px;
-        }}
-        
-        .ticket-issue {{
-            color: #d4b3ff;
-            margin-bottom: 20px;
-            font-size: 1rem;
-            line-height: 1.5;
-        }}
-        
-        .ticket-footer {{
-            display: flex;
-            justify-content: space-between;
-            align-items: center;
-            color: #888;
-            font-size: 0.9rem;
-        }}
-        
-        .ticket-category {{
-            font-weight: bold;
-        }}
-        
-        .no-tickets {{
-            text-align: center;
-            padding: 40px;
-            color: #666;
-        }}
-        
         @media (max-width: 768px) {{
             .header {{
                 flex-direction: column;
@@ -3219,13 +2024,10 @@ def dashboard():
             .profile-section {{
                 gap: 20px;
             }}
-            .profile-card, .key-card, .tickets-section {{
+            .profile-card, .key-card {{
                 padding: 25px 20px;
             }}
             .stats-grid {{
-                grid-template-columns: 1fr;
-            }}
-            .tickets-grid {{
                 grid-template-columns: 1fr;
             }}
             .avatar, .avatar img {{
@@ -3247,8 +2049,9 @@ def dashboard():
     <div class="header">
         <div class="logo">GOBLIN HUT</div>
         <div class="user-info">
+            {'<img src="' + avatar_url + '" alt="Avatar" class="user-avatar">' if avatar_url else '<div class="user-avatar"></div>'}
             <div class="user-name">{user_data.get('in_game_name', 'Player')}</div>
-            <a href="/logout" class="logout-btn">Exit Cave</a>
+            <a href="/logout" class="logout-btn">Logout</a>
         </div>
     </div>
     
@@ -3256,10 +2059,10 @@ def dashboard():
         <div class="profile-section">
             <div class="profile-card">
                 <div class="profile-header">
-                    {avatar_html}
+                    {'<img src="' + avatar_url + '" alt="Avatar">' if avatar_url else '<div class="avatar">?</div>'}
                     <div class="profile-info">
                         <h2>{user_data.get('in_game_name', 'Player')}</h2>
-                        <p>Member for {days_ago} days • {total_games} games • Prestige {user_data.get('prestige', 0)}</p>
+                        <p>Member since {user_data.get('created_at', 'Unknown')[:10]} • {total_games} games • Prestige {user_data.get('prestige', 0)}</p>
                     </div>
                 </div>
                 
@@ -3297,7 +2100,7 @@ def dashboard():
                     Do not share it with anyone.
                 </p>
                 
-                <div class="key-display" id="apiKeyDisplay" onclick="this.classList.add('revealed')">
+                <div class="key-display" id="apiKeyDisplay">
                     {session['user_key']}
                 </div>
                 
@@ -3308,15 +2111,6 @@ def dashboard():
                 <button class="action-btn" onclick="downloadTool()" style="background: linear-gradient(45deg, #00ff9d, #00d4ff);">
                     🛠️ Download Tool
                 </button>
-                
-                { '<button class="action-btn admin-btn" onclick="changeKey()">Change Key (Admin)</button>' if is_admin else '' }
-            </div>
-        </div>
-        
-        <div class="tickets-section">
-            <h3>Your Open Tickets</h3>
-            <div class="tickets-grid">
-                {tickets_html}
             </div>
         </div>
     </div>
@@ -3329,30 +2123,9 @@ def dashboard():
             }});
         }}
         
-        function changeKey() {{
-            if (!confirm('Generate a new API key? Your current key will be invalidated.')) return;
-            
-            fetch('/api/change-key', {{
-                method: 'POST',
-                headers: {{'Content-Type': 'application/json'}},
-                body: JSON.stringify({{ api_key: "{session['user_key']}" }})
-            }})
-            .then(r => r.json())
-            .then(data => {{
-                if (data.success) {{
-                    alert('New key generated! Please login again.');
-                    window.location.href = '/logout';
-                }} else {{
-                    alert(data.error);
-                }}
-            }});
-        }}
-        
         function downloadTool() {{
-            // Replace with your actual GitHub release URL
             const githubReleaseUrl = 'https://github.com/yourusername/goblin-hut-tool/releases/latest/download/goblin_hut_tool.exe';
             
-            // Create hidden download link
             const link = document.createElement('a');
             link.href = githubReleaseUrl;
             link.download = 'goblin_hut_tool.exe';
@@ -3361,7 +2134,6 @@ def dashboard():
             link.click();
             document.body.removeChild(link);
             
-            // Show download started message
             alert('Download started! Check your downloads folder.');
         }}
     </script>
@@ -3371,62 +2143,8 @@ def dashboard():
     return html
 
 # =============================================================================
-# API ENDPOINTS
+# API ENDPOINTS - COMPLETE
 # =============================================================================
-
-@app.route('/api/check-admin')
-def check_admin():
-    """Check if user has admin role"""
-    api_key = request.args.get('key')
-    if not api_key:
-        return jsonify({"is_admin": False})
-    
-    user_data = validate_api_key(api_key.upper())
-    if not user_data:
-        return jsonify({"is_admin": False})
-    
-    return jsonify({"is_admin": bool(user_data.get('is_admin', 0))})
-
-@app.route('/api/change-key', methods=['POST'])
-def change_key():
-    """Change API key (admin only)"""
-    data = request.get_json()
-    api_key = data.get('api_key', '').upper()
-    
-    if not api_key:
-        return jsonify({"success": False, "error": "Missing API key"})
-    
-    user_data = validate_api_key(api_key)
-    if not user_data:
-        return jsonify({"success": False, "error": "Invalid API key"})
-    
-    if not user_data.get('is_admin'):
-        return jsonify({"success": False, "error": "Admin privileges required"})
-    
-    new_key = generate_secure_key()
-    
-    conn = get_db_connection()
-    conn.execute(
-        'UPDATE players SET api_key = ? WHERE id = ?',
-        (new_key, user_data['id'])
-    )
-    conn.commit()
-    conn.close()
-    
-    return jsonify({"success": True, "new_key": new_key})
-
-@app.route('/api/refresh-stats')
-def refresh_stats():
-    """Refresh player stats"""
-    api_key = request.args.get('key', '').upper()
-    if not api_key:
-        return jsonify({"error": "No key provided"}), 401
-    
-    user_data = validate_api_key(api_key)
-    if not user_data:
-        return jsonify({"error": "Invalid key"}), 401
-    
-    return jsonify({"success": True, "message": "Stats refreshed"})
 
 @app.route('/api/stats')
 def api_stats():
@@ -3439,6 +2157,9 @@ def api_stats():
     
     conn.close()
     
+    # Send to webhook
+    send_stats_webhook(total_players, total_kills, total_games)
+    
     return jsonify({
         "total_players": total_players,
         "total_kills": total_kills,
@@ -3449,33 +2170,33 @@ def api_stats():
 
 @app.route('/api/leaderboard')
 def api_leaderboard():
-    """Get leaderboard data"""
+    """Get leaderboard"""
     conn = get_db_connection()
     
-    # Get top 10 players by K/D ratio (minimum 10 kills)
-    top_players = conn.execute('''
-        SELECT discord_name, in_game_name, total_kills, total_deaths, 
-               CAST(total_kills AS FLOAT) / MAX(total_deaths, 1) as kd_ratio,
-               wins, losses, prestige
+    players = conn.execute('''
+        SELECT in_game_name, total_kills, total_deaths, wins, losses, prestige
         FROM players 
-        WHERE total_kills >= 10
-        ORDER BY kd_ratio DESC, total_kills DESC
+        WHERE total_kills > 0
+        ORDER BY CAST(total_kills AS FLOAT) / MAX(total_deaths, 1) DESC 
         LIMIT 10
     ''').fetchall()
     
     conn.close()
     
     leaderboard = []
-    for i, player in enumerate(top_players, 1):
+    for i, player in enumerate(players, 1):
+        total_deaths = max(player['total_deaths'] or 1, 1)
+        kd = (player['total_kills'] or 0) / total_deaths
+        
         leaderboard.append({
             "rank": i,
-            "name": player['in_game_name'] or player['discord_name'],
-            "kills": player['total_kills'],
-            "deaths": player['total_deaths'],
-            "kd": round(player['kd_ratio'], 2),
-            "wins": player['wins'],
-            "losses": player['losses'],
-            "prestige": player['prestige']
+            "name": player['in_game_name'] or "Unknown",
+            "kills": player['total_kills'] or 0,
+            "deaths": player['total_deaths'] or 0,
+            "kd": round(kd, 2),
+            "wins": player['wins'] or 0,
+            "losses": player['losses'] or 0,
+            "prestige": player['prestige'] or 0
         })
     
     return jsonify({"leaderboard": leaderboard})
@@ -3486,91 +2207,107 @@ def health():
     return jsonify({
         "status": "healthy" if bot_active else "offline",
         "bot_active": bot_active,
-        "service": "Goblin Hut Bot",
         "timestamp": datetime.utcnow().isoformat()
     })
 
 # =============================================================================
-# STARTUP
+# SCHEDULERS - COMPLETE
+# =============================================================================
+
+def stats_scheduler():
+    """Send stats to webhook every hour"""
+    def scheduler():
+        while True:
+            time.sleep(3600)  # 1 hour
+            try:
+                if STATS_WEBHOOK:
+                    conn = get_db_connection()
+                    total_players = conn.execute('SELECT COUNT(*) as count FROM players').fetchone()['count']
+                    total_kills = conn.execute('SELECT SUM(total_kills) as sum FROM players').fetchone()['sum'] or 0
+                    total_games = conn.execute('SELECT SUM(wins + losses) as sum FROM players').fetchone()['sum'] or 0
+                    conn.close()
+                    
+                    send_stats_webhook(total_players, total_kills, total_games)
+                    logger.info("Sent hourly stats to webhook")
+                    
+            except Exception as e:
+                logger.error(f"Stats scheduler error: {e}")
+    
+    thread = threading.Thread(target=scheduler, daemon=True)
+    thread.start()
+    logger.info("Stats scheduler started")
+
+def ping_scheduler():
+    """Ping server to keep it alive"""
+    def scheduler():
+        while True:
+            time.sleep(300)  # 5 minutes
+            try:
+                requests.get(f"http://localhost:{port}/health", timeout=10)
+            except:
+                pass
+    
+    thread = threading.Thread(target=scheduler, daemon=True)
+    thread.start()
+    logger.info("Ping scheduler started")
+
+# =============================================================================
+# STARTUP - COMPLETE
 # =============================================================================
 
 if __name__ == '__main__':
+    # Initialize database
     init_db()
     
-    # Fix any existing keys that don't match the correct format
-    fixed_keys = fix_existing_keys()
-    if fixed_keys > 0:
-        print(f"Fixed {fixed_keys} API keys to correct format")
-    
-    # Run validation test
-    test_key_validation()
-    
     print("\n" + "="*60)
-    print("GOBLIN HUT BOT - COMPLETE VERSION WITH ADMIN CHANNELS")
+    print("GOBLIN HUT BOT - COMPLETE VERSION")
     print("="*60)
     
+    # Test Discord connection
     if test_discord_token():
         bot_active = True
-        print("Discord bot connected")
+        print("✓ Discord bot connected")
         
         if register_commands():
-            print("Commands registered")
+            print("✓ Commands registered")
         else:
-            print("Could not register commands")
+            print("✗ Could not register commands")
     else:
-        print("Discord token not set or invalid")
+        print("✗ Discord token not set or invalid")
+        print("  The web interface will work but Discord commands won't")
     
-    # Try to restore database from channel if DATABASE_CHANNEL_ID is set
-    if DATABASE_CHANNEL_ID:
-        print(f"\nDatabase channel ID found: {DATABASE_CHANNEL_ID}")
-        restore_success = restore_database()
-        if restore_success:
-            print("Database restored from channel backup")
-        else:
-            print("Could not restore database from channel")
-    else:
-        print("\nNo database channel ID set. Use `/setup database` in Discord to create one.")
+    # Start schedulers
+    stats_scheduler()
+    ping_scheduler()
     
-    # Start ping scheduler
-    start_ping_scheduler()
+    print(f"\n📊 Web Interface: http://localhost:{port}")
+    print("🤖 Bot Endpoint: /interactions")
     
-    print(f"\nWeb Interface: http://localhost:{port}")
-    print(f"Bot Endpoint: /interactions")
+    print("\n📋 Available Commands:")
+    print("   /ping          - Check if bot is online")
+    print("   /register      - Register and get API key")
+    print("   /ticket        - Create a support ticket")
+    print("   /close         - Close current ticket")
+    print("   /profile       - Show your profile and stats")
+    print("   /key           - Show your API key")
+    print("   /setup         - Create key database channel")
     
-    print("\nCommands Available:")
-    print("   /ping - Check if bot is online")
-    print("   /register [name] - Register and get API key (one-time only)")
-    print("   /ticket [issue] [category] - Create a support ticket")
-    print("   /close - Close current ticket")
-    print("   /profile - Show your profile and stats")
-    print("   /key - Show your API key")
-    print("   /setup [type] - Create admin/database channel (Admin only)")
-    print("        Types: admin-chat, admin-voice, database, logs")
-    print("   /backup - Backup current database to channel (Admin only)")
-    print("   /restore - Restore database from channel backup (Admin only)")
+    print("\n🔑 Key Database Channel:")
+    print("   • Stores all API key registrations")
+    print("   • Format: KEY|DiscordID|DiscordName|InGameName|Date|Key")
+    print("   • Created with /setup command")
     
-    print("\nAdmin Channel Features:")
-    print("   • Creates channels similar to tickets but admin-only")
-    print("   • Has close button like tickets")
-    print("   • Only visible to admins and bot")
-    print("   • Database channel for data persistence")
-    print("   • Admin chat/voice channels for team communication")
+    print("\n🌐 Webhooks:")
+    print(f"   • Registrations: {'✅ Set' if REGISTRATION_WEBHOOK else '❌ Not set'}")
+    print(f"   • Logins: {'✅ Set' if LOGIN_WEBHOOK else '❌ Not set'}")
+    print(f"   • Tickets: {'✅ Set' if TICKET_WEBHOOK else '❌ Not set'}")
+    print(f"   • Scores: {'✅ Set' if SCORE_WEBHOOK else '❌ Not set'}")
+    print(f"   • Stats: {'✅ Set' if STATS_WEBHOOK else '❌ Not set'}")
     
-    print("\nEnvironment Check:")
-    print(f"   DISCORD_TOKEN: {'Set' if DISCORD_TOKEN else 'Not set'}")
-    print(f"   DISCORD_CLIENT_ID: {'Set' if DISCORD_CLIENT_ID else 'Not set'}")
-    print(f"   DISCORD_PUBLIC_KEY: {'Set' if DISCORD_PUBLIC_KEY else 'Not set'}")
-    print(f"   ADMIN_ROLE_ID: {'Set' if ADMIN_ROLE_ID else 'Not set'}")
-    print(f"   SCORE_WEBHOOK: {'Set' if SCORE_WEBHOOK else 'Not set'}")
-    print(f"   DATABASE_CHANNEL_ID: {'Set' if DATABASE_CHANNEL_ID else 'Not set'}")
+    print(f"\n🗄️  Key Database Channel: {'✅ ' + KEY_DATABASE_CHANNEL_ID if KEY_DATABASE_CHANNEL_ID else '❌ Not created (use /setup)'}")
     
-    print("\nTroubleshooting:")
-    print("   1. Install required libraries: pip install pynacl requests flask flask-cors")
-    print("   2. Set all Discord environment variables")
-    print("   3. Check bot has proper permissions")
-    print("   4. View logs for detailed errors")
-    print("   5. Use /setup database in Discord to create database channel")
-    
-    print("\n" + "="*60 + "\n")
+    print("\n" + "="*60)
+    print("🚀 Starting server...")
+    print("="*60 + "\n")
     
     app.run(host='0.0.0.0', port=port, debug=False)
