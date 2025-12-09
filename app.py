@@ -1170,83 +1170,6 @@ def register_commands():
             "type": 1
         },
         {
-            "name": "match",
-            "description": "Match management commands",
-            "type": 1,
-            "options": [
-                {
-                    "name": "start",
-                    "description": "Start a new match",
-                    "type": 1,
-                    "options": [
-                        {
-                            "name": "team1",
-                            "description": "Team 1 players (comma separated)",
-                            "type": 3,
-                            "required": True
-                        },
-                        {
-                            "name": "team2",
-                            "description": "Team 2 players (comma separated)",
-                            "type": 3,
-                            "required": True
-                        }
-                    ]
-                },
-                {
-                    "name": "score",
-                    "description": "Update match score",
-                    "type": 1,
-                    "options": [
-                        {
-                            "name": "match_id",
-                            "description": "Match ID",
-                            "type": 3,
-                            "required": True
-                        },
-                        {
-                            "name": "team1_score",
-                            "description": "Team 1 score",
-                            "type": 4,
-                            "required": True
-                        },
-                        {
-                            "name": "team2_score",
-                            "description": "Team 2 score",
-                            "type": 4,
-                            "required": True
-                        }
-                    ]
-                },
-                {
-                    "name": "end",
-                    "description": "End a match",
-                    "type": 1,
-                    "options": [
-                        {
-                            "name": "match_id",
-                            "description": "Match ID",
-                            "type": 3,
-                            "required": True
-                        }
-                    ]
-                },
-                {
-                    "name": "stats",
-                    "description": "Show match stats",
-                    "type": 1,
-                    "options": [
-                        {
-                            "name": "match_id",
-                            "description": "Match ID",
-                            "type": 3,
-                            "required": True
-                        }
-                    ]
-                }
-            ]
-        },
-        {
             "name": "setup",
             "description": "Setup bot database channel (Admin only)",
             "type": 1
@@ -2050,131 +1973,6 @@ def interactions():
                         "flags": 64
                     }
                 })
-        
-        # MATCH COMMAND
-        elif command == 'match':
-            options = data.get('data', {}).get('options', [])
-            subcommand = options[0].get('name') if options else None
-            
-            # Check if user is admin
-            is_admin = is_user_admin_in_guild(server_id, user_id)
-            if not is_admin:
-                return jsonify({
-                    "type": 4,
-                    "data": {
-                        "content": "You need admin privileges to manage matches.",
-                        "flags": 64
-                    }
-                })
-            
-            # START MATCH
-            if subcommand == 'start':
-                sub_options = options[0].get('options', [])
-                team1_str = sub_options[0].get('value', '') if len(sub_options) > 0 else ''
-                team2_str = sub_options[1].get('value', '') if len(sub_options) > 1 else ''
-                
-                team1_players = [p.strip() for p in team1_str.split(',')]
-                team2_players = [p.strip() for p in team2_str.split(',')]
-                
-                match_id = start_match(team1_players, team2_players)
-                
-                return jsonify({
-                    "type": 4,
-                    "data": {
-                        "content": f"**Match Started**\n\n**Match ID:** `{match_id}`\n**Team 1:** {', '.join(team1_players)}\n**Team 2:** {', '.join(team2_players)}",
-                        "flags": 64
-                    }
-                })
-            
-            # UPDATE SCORE
-            elif subcommand == 'score':
-                sub_options = options[0].get('options', [])
-                match_id = sub_options[0].get('value', '') if len(sub_options) > 0 else ''
-                team1_score = sub_options[1].get('value', 0) if len(sub_options) > 1 else 0
-                team2_score = sub_options[2].get('value', 0) if len(sub_options) > 2 else 0
-                
-                success = update_score(match_id, team1_score, team2_score)
-                
-                if success:
-                    return jsonify({
-                        "type": 4,
-                        "data": {
-                            "content": f"**Score Updated**\n\n**Match ID:** `{match_id}`\n**Team 1:** {team1_score}\n**Team 2:** {team2_score}",
-                            "flags": 64
-                        }
-                    })
-                else:
-                    return jsonify({
-                        "type": 4,
-                        "data": {
-                            "content": f"Match `{match_id}` not found.",
-                            "flags": 64
-                        }
-                    })
-            
-            # END MATCH
-            elif subcommand == 'end':
-                sub_options = options[0].get('options', [])
-                match_id = sub_options[0].get('value', '') if len(sub_options) > 0 else ''
-                
-                success = end_match(match_id)
-                
-                if success:
-                    return jsonify({
-                        "type": 4,
-                        "data": {
-                            "content": f"**Match Ended**\n\n**Match ID:** `{match_id}`\nMatch has been ended and stats recorded.",
-                            "flags": 64
-                    }
-                })
-                else:
-                    return jsonify({
-                        "type": 4,
-                        "data": {
-                            "content": f"Match `{match_id}` not found.",
-                            "flags": 64
-                        }
-                    })
-            
-            # MATCH STATS
-            elif subcommand == 'stats':
-                sub_options = options[0].get('options', [])
-                match_id = sub_options[0].get('value', '') if len(sub_options) > 0 else ''
-                
-                stats = get_match_stats(match_id)
-                
-                if stats:
-                    embed = {
-                        "title": f"Match Stats - {match_id}",
-                        "color": 0x00ff9d,
-                        "fields": [
-                            {"name": "Team 1", "value": f"Players: {', '.join(stats['team1_players'])}\nScore: **{stats['team1_score']}**", "inline": True},
-                            {"name": "Team 2", "value": f"Players: {', '.join(stats['team2_players'])}\nScore: **{stats['team2_score']}**", "inline": True},
-                            {"name": "Status", "value": stats['status'].upper(), "inline": True},
-                            {"name": "Winner", "value": stats['winner'] or "TBD", "inline": True},
-                            {"name": "Started", "value": f"<t:{int(datetime.strptime(stats['started_at'], '%Y-%m-%d %H:%M:%S').timestamp())}:R>", "inline": True}
-                        ],
-                        "timestamp": datetime.utcnow().isoformat()
-                    }
-                    
-                    if stats['ended_at']:
-                        embed["fields"].append({"name": "Ended", "value": f"<t:{int(datetime.strptime(stats['ended_at'], '%Y-%m-%d %H:%M:%S').timestamp())}:R>", "inline": True})
-                    
-                    return jsonify({
-                        "type": 4,
-                        "data": {
-                            "embeds": [embed],
-                            "flags": 64
-                        }
-                    })
-                else:
-                    return jsonify({
-                        "type": 4,
-                        "data": {
-                            "content": f"Match `{match_id}` not found.",
-                            "flags": 64
-                        }
-                    })
     
     # Unknown command type
     logger.warning(f"Unknown interaction type: {data.get('type')}")
@@ -3580,135 +3378,6 @@ def health():
     })
 
 # =============================================================================
-# SCORE TRACKING API ENDPOINTS
-# =============================================================================
-
-@app.route('/api/match/start', methods=['POST'])
-def api_start_match():
-    """Start a new match via API"""
-    data = request.get_json()
-    api_key = data.get('api_key', '').upper()
-    
-    if not api_key:
-        return jsonify({"success": False, "error": "Missing API key"}), 401
-    
-    user_data = validate_api_key(api_key)
-    if not user_data:
-        return jsonify({"success": False, "error": "Invalid API key"}), 401
-    
-    if not user_data.get('is_admin'):
-        return jsonify({"success": False, "error": "Admin privileges required"}), 403
-    
-    team1_players = data.get('team1_players', [])
-    team2_players = data.get('team2_players', [])
-    
-    if not team1_players or not team2_players:
-        return jsonify({"success": False, "error": "Both teams must have players"}), 400
-    
-    match_id = start_match(team1_players, team2_players)
-    
-    return jsonify({
-        "success": True,
-        "match_id": match_id,
-        "message": "Match started"
-    })
-
-@app.route('/api/match/update', methods=['POST'])
-def api_update_score():
-    """Update match score via API"""
-    data = request.get_json()
-    api_key = data.get('api_key', '').upper()
-    
-    if not api_key:
-        return jsonify({"success": False, "error": "Missing API key"}), 401
-    
-    user_data = validate_api_key(api_key)
-    if not user_data:
-        return jsonify({"success": False, "error": "Invalid API key"}), 401
-    
-    if not user_data.get('is_admin'):
-        return jsonify({"success": False, "error": "Admin privileges required"}), 403
-    
-    match_id = data.get('match_id')
-    team1_score = data.get('team1_score', 0)
-    team2_score = data.get('team2_score', 0)
-    
-    if not match_id:
-        return jsonify({"success": False, "error": "Missing match_id"}), 400
-    
-    success = update_score(match_id, team1_score, team2_score)
-    
-    if success:
-        return jsonify({
-            "success": True,
-            "message": "Score updated"
-        })
-    else:
-        return jsonify({
-            "success": False,
-            "error": "Match not found"
-        }), 404
-
-@app.route('/api/match/end', methods=['POST'])
-def api_end_match():
-    """End a match via API"""
-    data = request.get_json()
-    api_key = data.get('api_key', '').upper()
-    
-    if not api_key:
-        return jsonify({"success": False, "error": "Missing API key"}), 401
-    
-    user_data = validate_api_key(api_key)
-    if not user_data:
-        return jsonify({"success": False, "error": "Invalid API key"}), 401
-    
-    if not user_data.get('is_admin'):
-        return jsonify({"success": False, "error": "Admin privileges required"}), 403
-    
-    match_id = data.get('match_id')
-    
-    if not match_id:
-        return jsonify({"success": False, "error": "Missing match_id"}), 400
-    
-    success = end_match(match_id)
-    
-    if success:
-        return jsonify({
-            "success": True,
-            "message": "Match ended"
-        })
-    else:
-        return jsonify({
-            "success": False,
-            "error": "Match not found"
-        }), 404
-
-@app.route('/api/match/stats/<match_id>')
-def api_get_match_stats(match_id):
-    """Get match stats via API"""
-    api_key = request.args.get('key', '').upper()
-    
-    if not api_key:
-        return jsonify({"success": False, "error": "Missing API key"}), 401
-    
-    user_data = validate_api_key(api_key)
-    if not user_data:
-        return jsonify({"success": False, "error": "Invalid API key"}), 401
-    
-    stats = get_match_stats(match_id)
-    
-    if stats:
-        return jsonify({
-            "success": True,
-            "match": stats
-        })
-    else:
-        return jsonify({
-            "success": False,
-            "error": "Match not found"
-        }), 404
-
-# =============================================================================
 # STARTUP
 # =============================================================================
 
@@ -3755,22 +3424,25 @@ if __name__ == '__main__':
     print(f"\nWeb Interface: http://localhost:{port}")
     print(f"Bot Endpoint: /interactions")
     
-    print("\nNew Admin Commands:")
-    print("   /setup - Create private database channel for data persistence")
-    print("   /backup - Backup current database to channel")
-    print("   /restore - Restore database from channel backup")
-    print("   /deletechannel [channel_id] - Delete any channel (Admin only)")
+    print("\nCommands Available:")
+    print("   /ping - Check if bot is online")
+    print("   /register [name] - Register and get API key (one-time only)")
+    print("   /ticket [issue] [category] - Create a support ticket")
+    print("   /close - Close current ticket")
+    print("   /profile - Show your profile and stats")
+    print("   /key - Show your API key")
+    print("   /setup - Create private database channel for data persistence (Admin only)")
+    print("   /backup - Backup current database to channel (Admin only)")
+    print("   /restore - Restore database from channel backup (Admin only)")
+    print("   /deletechannel [channel_id] - Delete a channel (Admin only)")
     
-    print("\nExisting Features:")
+    print("\nFeatures:")
     print("   • Leaderboard on login screen")
     print("   • Direct tool download from dashboard")
     print("   • Tool download link: https://github.com/yourusername/goblin-hut-tool/releases")
     print("   • Discord profile pictures on web dashboard")
     print("   • Ticket channel delete permission for creators/admins")
     print("   • Auto ping every 5 minutes to prevent shutdown")
-    print("   • Score tracking with webhook notifications")
-    print("   • Match management via Discord commands")
-    print("   • API endpoints for external tools")
     print("   • API Key Format: GOB- + 20 uppercase alphanumeric chars")
     print("   • Database constraint: Keys must be exactly 24 characters")
     print("   • Leaderboard showing top players by K/D ratio")
