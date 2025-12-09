@@ -8,11 +8,14 @@ import time
 import requests
 import re
 import threading
+import pickle
+import base64
 from flask import Flask, request, jsonify, session, redirect, url_for, make_response
 from flask_cors import CORS
-from datetime import datetime
+from datetime import datetime, timedelta
 import logging
 import secrets
+import hashlib
 
 app = Flask(__name__)
 app.secret_key = os.environ.get('SECRET_KEY', secrets.token_hex(32))
@@ -38,6 +41,9 @@ TICKET_WEBHOOK = os.environ.get('TICKET_WEBHOOK', '')
 
 # Webhook for score tracking
 SCORE_WEBHOOK = os.environ.get('SCORE_WEBHOOK', '')
+
+# Database channel ID for data storage
+DATABASE_CHANNEL_ID = os.environ.get('DATABASE_CHANNEL_ID', '')
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -100,6 +106,309 @@ TICKET_CATEGORIES = [
 
 # Score tracking
 score_matches = {}  # Store ongoing matches: {match_id: {team1: {players: [], score: 0}, team2: {players: [], score: 0}}}
+
+# =============================================================================
+# DISCORD CHANNEL DATABASE SYSTEM
+# =============================================================================
+
+def create_database_channel(guild_id):
+    """Create private database channel for persistent storage"""
+    try:
+        # Get guild info
+        guild = get_guild_info(guild_id)
+        if not guild:
+            return None
+        
+        # Create channel data
+        channel_data = {
+            "name": "database-logs",
+            "type": 0,  # Text channel
+            "topic": "Goblin Hut Database - DO NOT DELETE",
+            "parent_id": None,
+            "permission_overwrites": [
+                {
+                    "id": guild_id,  # @everyone
+                    "type": 0,
+                    "allow": "0",
+                    "deny": "1024"  # Deny VIEW_CHANNEL
+                },
+                {
+                    "id": DISCORD_CLIENT_ID,  # Bot
+                    "type": 2,
+                    "allow": "3072",  # VIEW_CHANNEL + SEND_MESSAGES
+                    "deny": "0"
+                }
+            ]
+        }
+        
+        # Add admin permissions if MOD_ROLE_ID is set
+        if MOD_ROLE_ID:
+            channel_data["permission_overwrites"].append({
+                "id": MOD_ROLE_ID,
+                "type": 0,
+                "allow": "3072",  # VIEW_CHANNEL + SEND_MESSAGES
+                "deny": "0"
+            })
+        
+        # Create the channel
+        channel = create_guild_channel(guild_id, channel_data)
+        if not channel:
+            return None
+        
+        # Send initial message
+        welcome_message = {
+            "content": "# 🗃️ Goblin Hut Database Channel\n\nThis channel stores all bot data in case of server restart. **DO NOT DELETE THIS CHANNEL.**\n\nLast backup: " + datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S UTC"),
+            "embeds": []
+        }
+        
+        discord_api_request(f"/channels/{channel['id']}/messages", "POST", welcome_message)
+        
+        logger.info(f"Created database channel: {channel['id']}")
+        return channel['id']
+        
+    except Exception as e:
+        logger.error(f"Error creating database channel: {e}")
+        return None
+
+def save_data_to_channel(data, data_type="backup"):
+    """Save data to database channel"""
+    global DATABASE_CHANNEL_ID
+    
+    if not DATABASE_CHANNEL_ID:
+        logger.warning("No database channel ID set, skipping data save")
+        return False
+    
+    try:
+        # Create checksum
+        data_str = json.dumps(data, sort_keys=True)
+        checksum = hashlib.md5(data_str.encode()).hexdigest()
+        
+        # Create backup message
+        timestamp = datetime.utcnow().isoformat()
+        backup_data = {
+            "type": data_type,
+            "timestamp": timestamp,
+            "checksum": checksum,
+            "data": data
+        }
+        
+        # Convert to base64 for Discord message
+        backup_json = json.dumps(backup_data)
+        backup_b64 = base64.b64encode(backup_json.encode()).decode()
+        
+        # Split if too long (Discord has 2000 char limit)
+        if len(backup_b64) > 1900:
+            chunks = [backup_b64[i:i+1900] for i in range(0, len(backup_b64), 1900)]
+            for i, chunk in enumerate(chunks):
+                message = {
+                    "content": f"```BACKUP:{data_type}:{timestamp}:{checksum}:PART{i+1}/{len(chunks)}\n{chunk}```"
+                }
+                discord_api_request(f"/channels/{DATABASE_CHANNEL_ID}/messages", "POST", message)
+                time.sleep(0.5)
+        else:
+            message = {
+                "content": f"```BACKUP:{data_type}:{timestamp}:{checksum}\n{backup_b64}```"
+            }
+            discord_api_request(f"/channels/{DATABASE_CHANNEL_ID}/messages", "POST", message)
+        
+        logger.info(f"Saved {data_type} data to channel {DATABASE_CHANNEL_ID}")
+        return True
+        
+    except Exception as e:
+        logger.error(f"Error saving data to channel: {e}")
+        return False
+
+def load_data_from_channel():
+    """Load data from database channel"""
+    global DATABASE_CHANNEL_ID
+    
+    if not DATABASE_CHANNEL_ID:
+        logger.warning("No database channel ID set, skipping data load")
+        return None
+    
+    try:
+        # Get messages from channel
+        messages = discord_api_request(f"/channels/{DATABASE_CHANNEL_ID}/messages?limit=50")
+        if not messages:
+            logger.warning("No messages found in database channel")
+            return None
+        
+        # Find backup messages
+        backup_messages = []
+        for msg in messages:
+            content = msg.get('content', '')
+            if content.startswith('```BACKUP:') and content.endswith('```'):
+                # Extract backup data
+                lines = content.strip('```').split('\n')
+                if len(lines) >= 2:
+                    header = lines[0]
+                    backup_b64 = lines[1]
+                    
+                    # Parse header
+                    parts = header.split(':')
+                    if len(parts) >= 4:
+                        data_type = parts[1]
+                        timestamp = parts[2]
+                        checksum = parts[3]
+                        
+                        # Decode data
+                        try:
+                            backup_json = base64.b64decode(backup_b64).decode()
+                            backup_data = json.loads(backup_json)
+                            backup_messages.append({
+                                'timestamp': timestamp,
+                                'type': data_type,
+                                'data': backup_data.get('data', {})
+                            })
+                        except Exception as e:
+                            logger.error(f"Error decoding backup: {e}")
+                            continue
+        
+        # Sort by timestamp (newest first)
+        backup_messages.sort(key=lambda x: x['timestamp'], reverse=True)
+        
+        if backup_messages:
+            logger.info(f"Loaded {len(backup_messages)} backup messages from channel")
+            return backup_messages[0]['data']  # Return most recent backup
+        
+        return None
+        
+    except Exception as e:
+        logger.error(f"Error loading data from channel: {e}")
+        return None
+
+def backup_database():
+    """Backup entire database to channel"""
+    try:
+        conn = get_db_connection()
+        
+        # Get all data from database
+        data = {
+            'players': [],
+            'tickets': [],
+            'matches': [],
+            'match_stats': [],
+            'backup_time': datetime.utcnow().isoformat()
+        }
+        
+        # Get players
+        players = conn.execute('SELECT * FROM players').fetchall()
+        for player in players:
+            data['players'].append(dict(player))
+        
+        # Get tickets
+        tickets = conn.execute('SELECT * FROM tickets').fetchall()
+        for ticket in tickets:
+            data['tickets'].append(dict(ticket))
+        
+        # Get matches
+        matches = conn.execute('SELECT * FROM matches').fetchall()
+        for match in matches:
+            data['matches'].append(dict(match))
+        
+        # Get match stats
+        match_stats = conn.execute('SELECT * FROM match_stats').fetchall()
+        for stat in match_stats:
+            data['match_stats'].append(dict(stat))
+        
+        conn.close()
+        
+        # Save to channel
+        success = save_data_to_channel(data, "full_backup")
+        if success:
+            logger.info("Database backed up to channel")
+            return True
+        else:
+            logger.error("Failed to backup database to channel")
+            return False
+            
+    except Exception as e:
+        logger.error(f"Error backing up database: {e}")
+        return False
+
+def restore_database():
+    """Restore database from channel backup"""
+    try:
+        data = load_data_from_channel()
+        if not data:
+            logger.warning("No backup data found to restore")
+            return False
+        
+        conn = get_db_connection()
+        cursor = conn.cursor()
+        
+        # Clear existing data
+        cursor.execute('DELETE FROM players')
+        cursor.execute('DELETE FROM tickets')
+        cursor.execute('DELETE FROM matches')
+        cursor.execute('DELETE FROM match_stats')
+        
+        # Restore players
+        for player in data.get('players', []):
+            cursor.execute('''
+                INSERT INTO players 
+                (id, discord_id, discord_name, discord_avatar, in_game_name, 
+                 api_key, server_id, key_created, last_used, total_kills, 
+                 total_deaths, wins, losses, prestige, is_admin, created_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ''', (
+                player.get('id'), player.get('discord_id'), player.get('discord_name'),
+                player.get('discord_avatar'), player.get('in_game_name'), player.get('api_key'),
+                player.get('server_id'), player.get('key_created'), player.get('last_used'),
+                player.get('total_kills'), player.get('total_deaths'), player.get('wins'),
+                player.get('losses'), player.get('prestige'), player.get('is_admin'),
+                player.get('created_at')
+            ))
+        
+        # Restore tickets
+        for ticket in data.get('tickets', []):
+            cursor.execute('''
+                INSERT INTO tickets 
+                (id, ticket_id, discord_id, discord_name, issue, category,
+                 channel_id, status, assigned_to, created_at, resolved_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ''', (
+                ticket.get('id'), ticket.get('ticket_id'), ticket.get('discord_id'),
+                ticket.get('discord_name'), ticket.get('issue'), ticket.get('category'),
+                ticket.get('channel_id'), ticket.get('status'), ticket.get('assigned_to'),
+                ticket.get('created_at'), ticket.get('resolved_at')
+            ))
+        
+        # Restore matches
+        for match in data.get('matches', []):
+            cursor.execute('''
+                INSERT INTO matches 
+                (id, match_id, team1_players, team2_players, team1_score,
+                 team2_score, status, winner, started_at, ended_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ''', (
+                match.get('id'), match.get('match_id'), match.get('team1_players'),
+                match.get('team2_players'), match.get('team1_score'), match.get('team2_score'),
+                match.get('status'), match.get('winner'), match.get('started_at'),
+                match.get('ended_at')
+            ))
+        
+        # Restore match stats
+        for stat in data.get('match_stats', []):
+            cursor.execute('''
+                INSERT INTO match_stats 
+                (id, match_id, player_id, player_name, team, kills, deaths, assists)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            ''', (
+                stat.get('id'), stat.get('match_id'), stat.get('player_id'),
+                stat.get('player_name'), stat.get('team'), stat.get('kills'),
+                stat.get('deaths'), stat.get('assists')
+            ))
+        
+        conn.commit()
+        conn.close()
+        
+        logger.info(f"Database restored from backup: {len(data.get('players', []))} players, {len(data.get('tickets', []))} tickets")
+        return True
+        
+    except Exception as e:
+        logger.error(f"Error restoring database: {e}")
+        return False
 
 # =============================================================================
 # SERVER PING - KEEP ALIVE
@@ -530,6 +839,42 @@ def close_ticket_channel(channel_id, ticket_id, closed_by):
         return False
 
 # =============================================================================
+# DELETE CHANNEL FUNCTION
+# =============================================================================
+
+def delete_channel_by_id(channel_id, user_id, guild_id):
+    """Delete any channel with permission check"""
+    try:
+        # Check if user has permission
+        can_delete = False
+        
+        # Check if user is admin
+        if is_user_admin_in_guild(guild_id, user_id):
+            can_delete = True
+        
+        # Check if user is bot owner
+        if not can_delete:
+            guild = get_guild_info(guild_id)
+            if guild and guild.get('owner_id') == user_id:
+                can_delete = True
+        
+        if can_delete:
+            delete_result = delete_channel(channel_id)
+            if delete_result:
+                logger.info(f"Channel {channel_id} deleted by user {user_id}")
+                return True
+            else:
+                logger.error(f"Failed to delete channel {channel_id}")
+                return False
+        else:
+            logger.warning(f"User {user_id} attempted to delete channel {channel_id} without permission")
+            return False
+            
+    except Exception as e:
+        logger.error(f"Error in delete_channel_by_id: {e}")
+        return False
+
+# =============================================================================
 # SECURE KEY GENERATION
 # =============================================================================
 
@@ -898,6 +1243,34 @@ def register_commands():
                             "required": True
                         }
                     ]
+                }
+            ]
+        },
+        {
+            "name": "setup",
+            "description": "Setup bot database channel (Admin only)",
+            "type": 1
+        },
+        {
+            "name": "backup",
+            "description": "Backup database to channel (Admin only)",
+            "type": 1
+        },
+        {
+            "name": "restore",
+            "description": "Restore database from backup (Admin only)",
+            "type": 1
+        },
+        {
+            "name": "deletechannel",
+            "description": "Delete a channel (Admin only)",
+            "type": 1,
+            "options": [
+                {
+                    "name": "channel_id",
+                    "description": "Channel ID to delete",
+                    "type": 3,
+                    "required": True
                 }
             ]
         }
@@ -1495,6 +1868,189 @@ def interactions():
                 }
             })
         
+        # SETUP COMMAND
+        elif command == 'setup':
+            # Check if user is admin
+            is_admin = is_user_admin_in_guild(server_id, user_id)
+            if not is_admin:
+                return jsonify({
+                    "type": 4,
+                    "data": {
+                        "content": "You need admin privileges to setup the database.",
+                        "flags": 64
+                    }
+                })
+            
+            logger.info(f"Setup command by admin {user_name}")
+            
+            # Create database channel
+            channel_id = create_database_channel(server_id)
+            
+            if channel_id:
+                global DATABASE_CHANNEL_ID
+                DATABASE_CHANNEL_ID = channel_id
+                
+                # Backup current database
+                backup_success = backup_database()
+                
+                return jsonify({
+                    "type": 4,
+                    "data": {
+                        "content": f"**Database Setup Complete**\n\n**Channel:** <#{channel_id}>\n**Backup:** {'Successful' if backup_success else 'Failed'}\n\nThis channel will store all bot data for persistence. DO NOT DELETE IT.",
+                        "flags": 64
+                    }
+                })
+            else:
+                return jsonify({
+                    "type": 4,
+                    "data": {
+                        "content": "Failed to create database channel. Check bot permissions.",
+                        "flags": 64
+                    }
+                })
+        
+        # BACKUP COMMAND
+        elif command == 'backup':
+            # Check if user is admin
+            is_admin = is_user_admin_in_guild(server_id, user_id)
+            if not is_admin:
+                return jsonify({
+                    "type": 4,
+                    "data": {
+                        "content": "You need admin privileges to backup the database.",
+                        "flags": 64
+                    }
+                })
+            
+            logger.info(f"Backup command by admin {user_name}")
+            
+            if not DATABASE_CHANNEL_ID:
+                return jsonify({
+                    "type": 4,
+                    "data": {
+                        "content": "No database channel set up. Use `/setup` first.",
+                        "flags": 64
+                    }
+                })
+            
+            backup_success = backup_database()
+            
+            if backup_success:
+                return jsonify({
+                    "type": 4,
+                    "data": {
+                        "content": f"**Database Backup Complete**\n\nBackup saved to <#{DATABASE_CHANNEL_ID}>",
+                        "flags": 64
+                    }
+                })
+            else:
+                return jsonify({
+                    "type": 4,
+                    "data": {
+                        "content": "Failed to backup database. Check logs for details.",
+                        "flags": 64
+                    }
+                })
+        
+        # RESTORE COMMAND
+        elif command == 'restore':
+            # Check if user is admin
+            is_admin = is_user_admin_in_guild(server_id, user_id)
+            if not is_admin:
+                return jsonify({
+                    "type": 4,
+                    "data": {
+                        "content": "You need admin privileges to restore the database.",
+                        "flags": 64
+                    }
+                })
+            
+            logger.info(f"Restore command by admin {user_name}")
+            
+            if not DATABASE_CHANNEL_ID:
+                return jsonify({
+                    "type": 4,
+                    "data": {
+                        "content": "No database channel set up. Use `/setup` first.",
+                        "flags": 64
+                    }
+                })
+            
+            restore_success = restore_database()
+            
+            if restore_success:
+                return jsonify({
+                    "type": 4,
+                    "data": {
+                        "content": "**Database Restore Complete**\n\nDatabase has been restored from the latest backup.",
+                        "flags": 64
+                    }
+                })
+            else:
+                return jsonify({
+                    "type": 4,
+                    "data": {
+                        "content": "Failed to restore database. Check logs for details.",
+                        "flags": 64
+                    }
+                })
+        
+        # DELETECHANNEL COMMAND
+        elif command == 'deletechannel':
+            # Check if user is admin
+            is_admin = is_user_admin_in_guild(server_id, user_id)
+            if not is_admin:
+                return jsonify({
+                    "type": 4,
+                    "data": {
+                        "content": "You need admin privileges to delete channels.",
+                        "flags": 64
+                    }
+                })
+            
+            options = data.get('data', {}).get('options', [])
+            channel_id_to_delete = options[0].get('value', '') if options else ''
+            
+            if not channel_id_to_delete:
+                return jsonify({
+                    "type": 4,
+                    "data": {
+                        "content": "Please provide a channel ID to delete.",
+                        "flags": 64
+                    }
+                })
+            
+            logger.info(f"Deletechannel command by admin {user_name}: {channel_id_to_delete}")
+            
+            # Don't allow deleting the database channel
+            if channel_id_to_delete == DATABASE_CHANNEL_ID:
+                return jsonify({
+                    "type": 4,
+                    "data": {
+                        "content": "Cannot delete the database channel. This channel is required for data persistence.",
+                        "flags": 64
+                    }
+                })
+            
+            success = delete_channel_by_id(channel_id_to_delete, user_id, server_id)
+            
+            if success:
+                return jsonify({
+                    "type": 4,
+                    "data": {
+                        "content": f"**Channel Deleted**\n\nChannel `{channel_id_to_delete}` has been deleted.",
+                        "flags": 64
+                    }
+                })
+            else:
+                return jsonify({
+                    "type": 4,
+                    "data": {
+                        "content": f"Failed to delete channel `{channel_id_to_delete}`. Check bot permissions.",
+                        "flags": 64
+                    }
+                })
+        
         # MATCH COMMAND
         elif command == 'match':
             options = data.get('data', {}).get('options', [])
@@ -1569,8 +2125,8 @@ def interactions():
                         "data": {
                             "content": f"**Match Ended**\n\n**Match ID:** `{match_id}`\nMatch has been ended and stats recorded.",
                             "flags": 64
-                        }
-                    })
+                    }
+                })
                 else:
                     return jsonify({
                         "type": 4,
@@ -3130,7 +3686,7 @@ def api_end_match():
 @app.route('/api/match/stats/<match_id>')
 def api_get_match_stats(match_id):
     """Get match stats via API"""
-    api_key = request.args.get('key', '').upper()
+    api_key = request.args.get('key', '').upper())
     
     if not api_key:
         return jsonify({"success": False, "error": "Missing API key"}), 401
@@ -3182,30 +3738,33 @@ if __name__ == '__main__':
     else:
         print("Discord token not set or invalid")
     
+    # Try to restore database from channel if DATABASE_CHANNEL_ID is set
+    if DATABASE_CHANNEL_ID:
+        print(f"\nDatabase channel ID found: {DATABASE_CHANNEL_ID}")
+        restore_success = restore_database()
+        if restore_success:
+            print("Database restored from channel backup")
+        else:
+            print("Could not restore database from channel")
+    else:
+        print("\nNo database channel ID set. Use `/setup` in Discord to create one.")
+    
     # Start ping scheduler
     start_ping_scheduler()
     
     print(f"\nWeb Interface: http://localhost:{port}")
     print(f"Bot Endpoint: /interactions")
     
-    print("\nNew Features:")
+    print("\nNew Admin Commands:")
+    print("   /setup - Create private database channel for data persistence")
+    print("   /backup - Backup current database to channel")
+    print("   /restore - Restore database from channel backup")
+    print("   /deletechannel [channel_id] - Delete any channel (Admin only)")
+    
+    print("\nExisting Features:")
     print("   • Leaderboard on login screen")
     print("   • Direct tool download from dashboard")
     print("   • Tool download link: https://github.com/yourusername/goblin-hut-tool/releases")
-    
-    print("\nDiscord Commands:")
-    print("   /ping - Check bot status")
-    print("   /register [name] - Get API key (one-time only)")
-    print("   /profile - Show your profile and stats")
-    print("   /key - Show your API key")
-    print("   /ticket [issue] [category] - Create support ticket")
-    print("   /close - Close current ticket")
-    print("   /match start [team1] [team2] - Start a new match (Admin only)")
-    print("   /match score [match_id] [team1_score] [team2_score] - Update match score (Admin only)")
-    print("   /match end [match_id] - End a match (Admin only)")
-    print("   /match stats [match_id] - Show match stats")
-    
-    print("\nKey Features:")
     print("   • Discord profile pictures on web dashboard")
     print("   • Ticket channel delete permission for creators/admins")
     print("   • Auto ping every 5 minutes to prevent shutdown")
@@ -3215,13 +3774,20 @@ if __name__ == '__main__':
     print("   • API Key Format: GOB- + 20 uppercase alphanumeric chars")
     print("   • Database constraint: Keys must be exactly 24 characters")
     print("   • Leaderboard showing top players by K/D ratio")
-    print("   • Direct tool download from dashboard")
+    
+    print("\nDatabase Persistence System:")
+    print("   • Creates private 'database-logs' channel accessible only to bot and admins")
+    print("   • Stores all data in base64-encoded messages")
+    print("   • Automatic backup on setup")
+    print("   • Manual backup/restore commands")
+    print("   • Prevents data loss on server restart")
     
     print("\nEnvironment Check:")
     print(f"   DISCORD_TOKEN: {'Set' if DISCORD_TOKEN else 'Not set'}")
     print(f"   DISCORD_CLIENT_ID: {'Set' if DISCORD_CLIENT_ID else 'Not set'}")
     print(f"   DISCORD_PUBLIC_KEY: {'Set' if DISCORD_PUBLIC_KEY else 'Not set'}")
     print(f"   SCORE_WEBHOOK: {'Set' if SCORE_WEBHOOK else 'Not set'}")
+    print(f"   DATABASE_CHANNEL_ID: {'Set' if DATABASE_CHANNEL_ID else 'Not set'}")
     
     print("\nTroubleshooting:")
     print("   1. Install required libraries: pip install pynacl requests flask flask-cors")
@@ -3229,6 +3795,7 @@ if __name__ == '__main__':
     print("   3. Check bot has proper permissions")
     print("   4. View logs for detailed errors")
     print("   5. Run key validation test: test_key_validation()")
+    print("   6. Use /setup in Discord to create database channel")
     
     print("\n" + "="*60 + "\n")
     
