@@ -17,14 +17,6 @@ import logging
 import secrets
 import hashlib
 
-# Try to import psutil, but handle if it's not available
-try:
-    import psutil
-    PSUTIL_AVAILABLE = True
-except ImportError:
-    PSUTIL_AVAILABLE = False
-    print("Warning: psutil module not installed. Uptime tracking will be limited.")
-
 app = Flask(__name__)
 app.secret_key = os.environ.get('SECRET_KEY', secrets.token_hex(32))
 # Increase session lifetime
@@ -338,16 +330,6 @@ def send_stats_webhook(channel_id=None, webhook_url=None):
         total_games = total_wins + total_losses
         avg_kd = total_kills / total_deaths
         
-        # Calculate server uptime
-        if PSUTIL_AVAILABLE:
-            boot_time = time.time() - psutil.boot_time()
-            uptime_days = int(boot_time // 86400)
-            uptime_hours = int((boot_time % 86400) // 3600)
-            uptime_text = f"**{uptime_days}d {uptime_hours}h**"
-        else:
-            # Fallback to using process start time if psutil is not available
-            uptime_text = "**Active**"
-        
         # Create stats embed
         embed = {
             "title": "🎮 Goblin Hut Server Statistics",
@@ -359,7 +341,6 @@ def send_stats_webhook(channel_id=None, webhook_url=None):
                 {"name": "⚔️ Avg K/D Ratio", "value": f"**{avg_kd:.2f}**", "inline": True},
                 {"name": "🏆 Games Played", "value": f"**{total_games}**", "inline": True},
                 {"name": "📊 Win Rate", "value": f"**{(total_wins/total_games*100):.1f}%**" if total_games > 0 else "**0%**", "inline": True},
-                {"name": "⏰ Server Uptime", "value": uptime_text, "inline": True}
             ],
             "footer": {"text": "Updates every 5 minutes • Use /register to join!"},
             "timestamp": datetime.utcnow().isoformat()
@@ -420,29 +401,6 @@ def start_stats_scheduler():
     thread = threading.Thread(target=scheduler, daemon=True)
     thread.start()
     logger.info("Started stats scheduler")
-
-# =============================================================================
-# SERVER PING - KEEP ALIVE
-# =============================================================================
-
-def ping_server():
-    """Ping the server every 5 minutes to keep it alive"""
-    try:
-        response = requests.get(f"http://localhost:{port}/health", timeout=10)
-        logger.info(f"Server ping response: {response.status_code}")
-    except Exception as e:
-        logger.error(f"Server ping failed: {e}")
-
-def start_ping_scheduler():
-    """Start the ping scheduler"""
-    def scheduler():
-        while True:
-            time.sleep(300)  # 5 minutes
-            ping_server()
-    
-    thread = threading.Thread(target=scheduler, daemon=True)
-    thread.start()
-    logger.info("Server ping scheduler started")
 
 # =============================================================================
 # DISCORD API HELPERS
@@ -2361,7 +2319,7 @@ def home():
             
             .stats-grid {
                 display: grid;
-                grid-template-columns: repeat(2, 1fr);
+                grid-template-columns: repeat(3, 1fr);
                 gap: 15px;
                 margin-bottom: 20px;
             }
@@ -2534,10 +2492,6 @@ def home():
                             <div class="stat-item">
                                 <div class="stat-label">Games Played</div>
                                 <div class="stat-value" id="totalGames">0</div>
-                            </div>
-                            <div class="stat-item">
-                                <div class="stat-label">Server Uptime</div>
-                                <div class="stat-value" id="serverUptime">Active</div>
                             </div>
                         </div>
                     </div>
@@ -3616,73 +3570,39 @@ def test_all_functions():
 # STARTUP
 # =============================================================================
 
-if __name__ == '__main__':
-    init_db()
-    
-    # Fix any existing keys that don't match the correct format
-    fixed_keys = fix_existing_keys()
-    if fixed_keys > 0:
-        print(f"Fixed {fixed_keys} API keys to correct format")
-    
-    # Run validation test
-    test_key_validation()
-    
-    print("\n" + "="*60)
-    print("GOBLIN HUT BOT - UPDATED VERSION")
-    print("="*60)
-    
-    if test_discord_token():
-        bot_active = True
-        print("Discord bot connected")
+def startup_sequence():
+    """Run startup sequence for Render/WSGI compatibility"""
+    try:
+        init_db()
         
-        if register_commands():
-            print("Commands registered")
+        # Fix any existing keys that don't match the correct format
+        fixed_keys = fix_existing_keys()
+        if fixed_keys > 0:
+            logger.info(f"Fixed {fixed_keys} API keys to correct format")
+        
+        # Test Discord connection
+        if test_discord_token():
+            globals()['bot_active'] = True
+            logger.info("Discord bot connected")
+            
+            if register_commands():
+                logger.info("Commands registered")
+            else:
+                logger.warning("Could not register commands")
         else:
-            print("Could not register commands")
-    else:
-        print("Discord token not set or invalid")
-    
-    # Run comprehensive tests
-    test_all_functions()
-    
-    # Start ping scheduler
-    start_ping_scheduler()
-    
-    # Start stats scheduler
-    start_stats_scheduler()
-    
-    print(f"\n✅ All systems ready!")
-    print(f"🌐 Web Interface: http://localhost:{port}")
-    print(f"🤖 Bot Endpoint: /interactions")
-    
-    print("\n🆕 NEW FEATURES:")
-    print("   • /setup key-database - Creates private channel with all API keys")
-    print("   • /setup stats-webhook - Creates channel with live server stats")
-    print("   • Darker theme with animated orbs")
-    print("   • Leaderboard on dashboard")
-    print("   • API key blur effect (hover to reveal)")
-    print("   • Live stats tracking")
-    print("   • Auto-updating key database")
-    
-    print("\n🔑 KEY DATABASE FEATURES:")
-    print("   • Private Discord channel")
-    print("   • Stores all player API keys")
-    print("   • Auto-updates on new registrations")
-    print("   • Admin-only access")
-    
-    print("\n📊 STATS WEBHOOK FEATURES:")
-    print("   • Live server statistics")
-    print("   • Updates every 5 minutes")
-    print("   • Shows total players, kills, games")
-    print("   • Server uptime tracking")
-    
-    print("\n🎨 UI IMPROVEMENTS:")
-    print("   • Dark theme with gradient accents")
-    print("   • Animated floating orbs")
-    print("   • Glass-morphism effects")
-    print("   • Responsive design")
-    
-    print("\n🚀 Ready to launch!")
-    print("="*60 + "\n")
-    
+            logger.warning("Discord token not set or invalid")
+        
+        # Start stats scheduler
+        start_stats_scheduler()
+        
+        logger.info(f"✅ Goblin Hut Bot started successfully on port {port}")
+        
+    except Exception as e:
+        logger.error(f"Startup error: {e}")
+
+# Initialize on import (for WSGI/Gunicorn)
+startup_sequence()
+
+# For direct execution (local testing)
+if __name__ == '__main__':
     app.run(host='0.0.0.0', port=port, debug=False)
