@@ -4,7 +4,6 @@ import secrets
 import logging
 from datetime import datetime
 import string
-import hashlib
 
 # =============================================================================
 # GLOBAL CONFIGURATION
@@ -19,7 +18,6 @@ ADMIN_ROLE_ID = os.environ.get('ADMIN_ROLE_ID', '')
 # Webhooks
 TICKET_WEBHOOK = os.environ.get('TICKET_WEBHOOK', '')
 SCORE_WEBHOOK = os.environ.get('SCORE_WEBHOOK', '')
-DATABASE_CHANNEL_ID = os.environ.get('DATABASE_CHANNEL_ID', '')
 
 # Database
 DATABASE = 'sot_tdm.db'
@@ -88,24 +86,6 @@ TICKET_CATEGORIES = [
     {"name": "Other", "emoji": "", "color": 0x9b59b6}
 ]
 
-# Add to config.py (in the CONSTANTS section)
-THEME_COLORS = {
-    'void_black': '#0a0a0f',
-    'abyss_black': '#12121a',
-    'midnight': '#1a1a2e',
-    'nebula': '#16213e',
-    'stardust': '#0f3460',
-    'cyber_purple': '#9d00ff',
-    'neon_purple': '#b300ff',
-    'matrix_green': '#00ff9d',
-    'cyber_green': '#00cc7a',
-    'cyber_pink': '#ff00ff',
-    'electric_blue': '#00d4ff',
-    'plasma': '#ff6b6b',
-    'hologram': '#e0d6ff',
-    'hologram_dim': '#a099cc'
-}
-
 # =============================================================================
 # UTILITY FUNCTIONS
 # =============================================================================
@@ -117,7 +97,10 @@ def generate_secure_key():
 
 def setup_logging():
     """Setup logging configuration"""
-    logging.basicConfig(level=logging.INFO)
+    logging.basicConfig(
+        level=logging.INFO,
+        format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+    )
     return logging.getLogger(__name__)
 
 # Initialize logger
