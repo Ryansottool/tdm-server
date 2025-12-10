@@ -14,5 +14,7 @@ services:
         sync: false
       - key: DISCORD_CLIENT_ID
         sync: false
+      - key: DISCORD_PUBLIC_KEY
+        sync: false
     healthCheckPath: /health
     autoDeploy: true
