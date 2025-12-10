@@ -88,6 +88,24 @@ TICKET_CATEGORIES = [
     {"name": "Other", "emoji": "", "color": 0x9b59b6}
 ]
 
+# Add to config.py (in the CONSTANTS section)
+THEME_COLORS = {
+    'void_black': '#0a0a0f',
+    'abyss_black': '#12121a',
+    'midnight': '#1a1a2e',
+    'nebula': '#16213e',
+    'stardust': '#0f3460',
+    'cyber_purple': '#9d00ff',
+    'neon_purple': '#b300ff',
+    'matrix_green': '#00ff9d',
+    'cyber_green': '#00cc7a',
+    'cyber_pink': '#ff00ff',
+    'electric_blue': '#00d4ff',
+    'plasma': '#ff6b6b',
+    'hologram': '#e0d6ff',
+    'hologram_dim': '#a099cc'
+}
+
 # =============================================================================
 # UTILITY FUNCTIONS
 # =============================================================================
