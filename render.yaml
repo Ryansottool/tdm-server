@@ -1,28 +1,27 @@
 services:
-  # Render Server
   - type: web
-    name: sot-tdm-server
+    name: goblin-hut-bot
     env: python
+    plan: free
+    region: frankfurt
     buildCommand: pip install -r requirements.txt
-    startCommand: python server.py
+    startCommand: gunicorn app:app --bind 0.0.0.0:$PORT --workers 1 --threads 8 --timeout 120
     envVars:
-      - key: PORT
-        value: 5000
-      - key: PYTHON_VERSION
-        value: 3.9.0
-    
-  # Discord Bot (Worker)
- services:
-  # Combined Server + Discord Bot
-  - type: web
-    name: sot-tdm-combined
-    env: python
-    buildCommand: pip install -r requirements.txt
-    startCommand: python app.py
-    envVars:
-      - key: PORT
-        value: 5000
+      - key: SECRET_KEY
+        generateValue: true
       - key: DISCORD_TOKEN
-        sync: false  # You'll set this in Render dashboard
-      - key: PYTHON_VERSION
-        value: 3.9.0
+        sync: false
+      - key: DISCORD_CLIENT_ID
+        sync: false
+      - key: DISCORD_PUBLIC_KEY
+        sync: false
+      - key: ADMIN_ROLE_ID
+        sync: false
+      - key: TICKET_WEBHOOK
+        sync: false
+      - key: SCORE_WEBHOOK
+        sync: false
+      - key: DATABASE_CHANNEL_ID
+        sync: false
+    healthCheckPath: /health
+    autoDeploy: true
