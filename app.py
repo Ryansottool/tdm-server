@@ -1,4 +1,4 @@
-# app.py - Professional Dark Theme with Admin Dashboard
+# app.py - Simplified Goblin Theme
 import os
 import json
 import secrets
@@ -21,12 +21,6 @@ port = int(os.environ.get("PORT", 10000))
 # =============================================================================
 # UTILITY FUNCTIONS
 # =============================================================================
-
-def is_user_admin():
-    """Check if current session user is admin"""
-    if 'user_data' not in session:
-        return False
-    return session['user_data'].get('is_admin', False)
 
 def get_all_players():
     """Get all players from database"""
@@ -143,37 +137,33 @@ def delete_player(player_id):
 @app.before_request
 def before_request():
     """Check session before each request"""
-    if request.endpoint in ['static', 'interactions']:
-        return
-    
-    if request.endpoint in ['home', 'api_validate_key', 'health', 'api_stats', 'api_leaderboard']:
+    if request.endpoint in ['static', 'interactions', 'home', 'api_validate_key', 'health', 'api_stats', 'api_leaderboard', 'logout']:
         return
     
     if 'user_key' not in session:
         return redirect(url_for('home'))
     
     # Re-validate session for admin routes
-    if request.endpoint in ['admin_dashboard', 'admin_players', 'admin_player_detail', 
-                           'admin_tickets', 'admin_matches', 'admin_settings']:
+    if request.endpoint in ['admin_dashboard']:
         user_data = validate_api_key(session.get('user_key'))
         if not user_data or not user_data.get('is_admin'):
             return redirect(url_for('dashboard'))
-        session['user_data'] = user_data
 
 # =============================================================================
-# WEB INTERFACE - PROFESSIONAL DARK THEME
+# WEB INTERFACE - SIMPLE GOBLIN THEME
 # =============================================================================
 
 @app.route('/')
 def home():
-    """Home page - Professional Dark Theme"""
+    """Home page - Simple Goblin Theme"""
     if 'user_key' in session:
         user_data = validate_api_key(session['user_key'])
         if user_data:
             session['user_data'] = user_data
-            return redirect(url_for('dashboard'))
-    
-    stats = get_global_stats()
+            if user_data.get('is_admin'):
+                return redirect(url_for('admin_dashboard'))
+            else:
+                return redirect(url_for('dashboard'))
     
     return render_template_string('''
     <!DOCTYPE html>
@@ -181,32 +171,8 @@ def home():
     <head>
         <meta charset="UTF-8">
         <meta name="viewport" content="width=device-width, initial-scale=1.0">
-        <title>SOT TDM System - Secure Access</title>
-        <link rel="preconnect" href="https://fonts.googleapis.com">
-        <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-        <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=JetBrains+Mono:wght@300;400;500&display=swap" rel="stylesheet">
-        <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+        <title>Goblin Cave - SOT TDM</title>
         <style>
-            :root {
-                /* Professional Dark Theme */
-                --bg-primary: #0d1117;
-                --bg-secondary: #161b22;
-                --bg-tertiary: #21262d;
-                --border: #30363d;
-                --text-primary: #c9d1d9;
-                --text-secondary: #8b949e;
-                --text-tertiary: #6e7681;
-                --accent-blue: #58a6ff;
-                --accent-green: #56d364;
-                --accent-yellow: #e3b341;
-                --accent-orange: #f78166;
-                --accent-purple: #bc8cff;
-                --success: #238636;
-                --warning: #9e6a03;
-                --danger: #da3633;
-                --info: #1f6feb;
-            }
-            
             * {
                 margin: 0;
                 padding: 0;
@@ -214,442 +180,289 @@ def home():
             }
             
             body {
-                font-family: 'Inter', sans-serif;
-                background: var(--bg-primary);
-                color: var(--text-primary);
+                font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+                background: linear-gradient(135deg, #0a0a0a 0%, #1a1a2e 100%);
+                color: #f0f0f0;
                 min-height: 100vh;
-                line-height: 1.6;
+                overflow-x: hidden;
+                position: relative;
             }
             
-            /* Minimal grid background */
-            .grid-bg {
+            /* Animated Background */
+            .cave-bg {
                 position: fixed;
-                width: 100%;
-                height: 100%;
                 top: 0;
                 left: 0;
+                width: 100%;
+                height: 100%;
                 background-image: 
-                    linear-gradient(rgba(88, 166, 255, 0.03) 1px, transparent 1px),
-                    linear-gradient(90deg, rgba(88, 166, 255, 0.03) 1px, transparent 1px);
-                background-size: 50px 50px;
-                z-index: -1;
-                pointer-events: none;
+                    radial-gradient(circle at 20% 50%, rgba(139, 92, 246, 0.1) 0%, transparent 20%),
+                    radial-gradient(circle at 80% 20%, rgba(34, 197, 94, 0.1) 0%, transparent 20%),
+                    radial-gradient(circle at 40% 80%, rgba(59, 130, 246, 0.1) 0%, transparent 20%);
+                z-index: -2;
+                animation: pulseBg 8s ease-in-out infinite alternate;
             }
             
-            .container {
-                max-width: 1200px;
-                margin: 0 auto;
-                padding: 40px 20px;
-                display: grid;
-                grid-template-columns: 1fr 1fr;
-                gap: 40px;
+            @keyframes pulseBg {
+                0% { opacity: 0.7; }
+                100% { opacity: 1; }
+            }
+            
+            /* Floating Goblins */
+            .goblin {
+                position: fixed;
+                font-size: 8rem;
+                opacity: 0.05;
+                z-index: -1;
+                user-select: none;
+                pointer-events: none;
+                animation: float 20s linear infinite;
+            }
+            
+            .goblin:nth-child(1) {
+                top: 10%;
+                left: 5%;
+                animation-delay: 0s;
+                animation-duration: 25s;
+            }
+            
+            .goblin:nth-child(2) {
+                top: 60%;
+                right: 10%;
+                animation-delay: 5s;
+                animation-duration: 30s;
+                animation-direction: reverse;
+            }
+            
+            .goblin:nth-child(3) {
+                bottom: 20%;
+                left: 15%;
+                animation-delay: 10s;
+                animation-duration: 35s;
+            }
+            
+            @keyframes float {
+                0%, 100% {
+                    transform: translateY(0px) rotate(0deg);
+                }
+                25% {
+                    transform: translateY(-20px) rotate(5deg);
+                }
+                50% {
+                    transform: translateY(0px) rotate(0deg);
+                }
+                75% {
+                    transform: translateY(20px) rotate(-5deg);
+                }
+            }
+            
+            /* Main Container */
+            .main-container {
+                min-height: 100vh;
+                display: flex;
+                flex-direction: column;
+                justify-content: center;
+                align-items: center;
+                padding: 2rem;
                 position: relative;
                 z-index: 1;
             }
             
-            @media (max-width: 1024px) {
-                .container {
-                    grid-template-columns: 1fr;
-                    max-width: 600px;
-                }
+            /* Header */
+            .header {
+                text-align: center;
+                margin-bottom: 3rem;
+                animation: fadeInDown 1s ease-out;
             }
             
-            /* HEADER SECTION */
-            .header-section {
-                animation: fadeIn 0.8s ease-out;
-            }
-            
-            .logo-container {
-                margin-bottom: 50px;
-                padding: 30px;
-                background: var(--bg-secondary);
-                border: 1px solid var(--border);
-                border-radius: 16px;
-                box-shadow: 0 8px 32px rgba(0, 0, 0, 0.2);
-            }
-            
-            .logo {
-                font-size: 3.5rem;
-                font-weight: 700;
-                margin-bottom: 10px;
-                color: var(--accent-blue);
-                font-family: 'Inter', sans-serif;
-            }
-            
-            .logo span {
-                color: var(--accent-green);
+            .title {
+                font-size: 4rem;
+                font-weight: 800;
+                background: linear-gradient(90deg, #8b5cf6, #22c55e, #3b82f6);
+                -webkit-background-clip: text;
+                -webkit-text-fill-color: transparent;
+                background-clip: text;
+                margin-bottom: 1rem;
+                letter-spacing: -1px;
             }
             
             .subtitle {
                 font-size: 1.2rem;
-                color: var(--text-secondary);
-                margin-bottom: 30px;
-                font-weight: 400;
+                color: #94a3b8;
+                max-width: 500px;
+                margin: 0 auto;
+                line-height: 1.6;
             }
             
-            .tagline {
-                display: flex;
-                flex-wrap: wrap;
-                gap: 12px;
-                margin-top: 20px;
-            }
-            
-            .tag {
-                padding: 8px 16px;
-                background: var(--bg-tertiary);
-                border: 1px solid var(--border);
-                border-radius: 20px;
-                font-size: 0.9rem;
-                color: var(--text-secondary);
-                font-weight: 500;
-                display: flex;
-                align-items: center;
-                gap: 8px;
-            }
-            
-            /* LOGIN SECTION */
+            /* Login Card */
             .login-card {
-                background: var(--bg-secondary);
-                border-radius: 16px;
-                padding: 40px;
-                border: 1px solid var(--border);
-                box-shadow: 0 8px 32px rgba(0, 0, 0, 0.2);
-                animation: slideUp 0.8s ease-out 0.2s both;
+                background: rgba(30, 41, 59, 0.8);
+                backdrop-filter: blur(10px);
+                border-radius: 20px;
+                padding: 3rem;
+                width: 100%;
+                max-width: 500px;
+                border: 1px solid rgba(139, 92, 246, 0.3);
+                box-shadow: 
+                    0 20px 40px rgba(0, 0, 0, 0.3),
+                    inset 0 1px 0 rgba(255, 255, 255, 0.1);
+                animation: fadeInUp 1s ease-out 0.2s both;
+            }
+            
+            .card-header {
+                text-align: center;
+                margin-bottom: 2rem;
             }
             
             .card-title {
-                font-size: 1.8rem;
-                color: var(--accent-blue);
-                margin-bottom: 30px;
-                font-weight: 600;
+                font-size: 2rem;
+                color: #f0f0f0;
+                margin-bottom: 0.5rem;
                 display: flex;
                 align-items: center;
-                gap: 12px;
+                justify-content: center;
+                gap: 1rem;
             }
             
-            .input-group {
+            .card-subtitle {
+                color: #94a3b8;
+                font-size: 1rem;
+            }
+            
+            /* Key Input */
+            .key-input-container {
                 position: relative;
-                margin-bottom: 24px;
+                margin-bottom: 1.5rem;
             }
             
-            .input-icon {
+            .key-icon {
                 position: absolute;
-                left: 16px;
+                left: 1.5rem;
                 top: 50%;
                 transform: translateY(-50%);
-                color: var(--text-tertiary);
+                color: #8b5cf6;
+                font-size: 1.2rem;
             }
             
             .key-input {
                 width: 100%;
-                padding: 16px 16px 16px 48px;
-                background: var(--bg-primary);
-                border: 1px solid var(--border);
+                padding: 1.2rem 1.2rem 1.2rem 3.5rem;
+                background: rgba(15, 23, 42, 0.8);
+                border: 2px solid rgba(139, 92, 246, 0.2);
                 border-radius: 12px;
-                color: var(--text-primary);
-                font-size: 1rem;
-                font-family: 'JetBrains Mono', monospace;
-                transition: all 0.2s;
+                color: #f0f0f0;
+                font-size: 1.1rem;
+                font-family: 'Courier New', monospace;
+                transition: all 0.3s ease;
             }
             
             .key-input:focus {
                 outline: none;
-                border-color: var(--accent-blue);
-                box-shadow: 0 0 0 3px rgba(88, 166, 255, 0.1);
+                border-color: #8b5cf6;
+                box-shadow: 0 0 0 3px rgba(139, 92, 246, 0.1);
+                transform: translateY(-2px);
             }
             
             .key-input::placeholder {
-                color: var(--text-tertiary);
+                color: #64748b;
             }
             
+            /* Login Button */
             .login-btn {
                 width: 100%;
-                padding: 16px;
-                background: var(--accent-blue);
-                color: white;
+                padding: 1.2rem;
+                background: linear-gradient(90deg, #8b5cf6, #22c55e);
                 border: none;
                 border-radius: 12px;
-                font-size: 1rem;
+                color: white;
+                font-size: 1.1rem;
                 font-weight: 600;
                 cursor: pointer;
-                transition: all 0.2s;
+                transition: all 0.3s ease;
                 display: flex;
                 align-items: center;
                 justify-content: center;
-                gap: 12px;
-                margin-top: 10px;
+                gap: 0.8rem;
+                margin-top: 0.5rem;
             }
             
             .login-btn:hover {
-                background: #388bfd;
                 transform: translateY(-2px);
-                box-shadow: 0 8px 16px rgba(88, 166, 255, 0.2);
+                box-shadow: 0 10px 20px rgba(139, 92, 246, 0.3);
             }
             
             .login-btn:active {
                 transform: translateY(0);
             }
             
-            .error-box {
-                background: rgba(218, 54, 51, 0.1);
-                border: 1px solid rgba(218, 54, 51, 0.3);
+            /* Error Message */
+            .error-message {
+                background: rgba(239, 68, 68, 0.1);
+                border: 1px solid rgba(239, 68, 68, 0.3);
                 border-radius: 12px;
-                padding: 16px;
-                margin-top: 20px;
-                color: var(--danger);
+                padding: 1rem;
+                margin-top: 1.5rem;
+                color: #fca5a5;
                 display: none;
                 animation: fadeIn 0.3s ease-out;
             }
             
-            /* INFO SECTION */
-            .info-card {
-                background: var(--bg-secondary);
-                border-radius: 16px;
-                padding: 32px;
-                border: 1px solid var(--border);
-                margin-top: 30px;
-                animation: fadeIn 0.8s ease-out 0.4s both;
+            /* Info Box */
+            .info-box {
+                background: rgba(15, 23, 42, 0.8);
+                border-radius: 12px;
+                padding: 1.5rem;
+                margin-top: 2rem;
+                border-left: 4px solid #22c55e;
             }
             
             .info-title {
-                font-size: 1.4rem;
-                color: var(--accent-blue);
-                margin-bottom: 24px;
-                display: flex;
-                align-items: center;
-                gap: 12px;
-            }
-            
-            .steps-list {
-                display: flex;
-                flex-direction: column;
-                gap: 16px;
-            }
-            
-            .step {
-                display: flex;
-                gap: 16px;
-                padding: 16px;
-                background: var(--bg-tertiary);
-                border-radius: 12px;
-                border-left: 4px solid var(--accent-blue);
-            }
-            
-            .step-number {
-                width: 32px;
-                height: 32px;
-                background: var(--accent-blue);
-                border-radius: 50%;
-                display: flex;
-                align-items: center;
-                justify-content: center;
-                color: white;
+                color: #22c55e;
                 font-weight: 600;
-                font-size: 0.9rem;
-                flex-shrink: 0;
+                margin-bottom: 0.8rem;
+                display: flex;
+                align-items: center;
+                gap: 0.8rem;
             }
             
-            .step-content {
-                flex-grow: 1;
-                color: var(--text-secondary);
+            .info-text {
+                color: #94a3b8;
+                font-size: 0.95rem;
+                line-height: 1.6;
             }
             
-            .step-content code {
-                background: var(--bg-primary);
-                padding: 4px 8px;
+            .info-code {
+                background: rgba(30, 41, 59, 0.8);
+                padding: 0.4rem 0.8rem;
                 border-radius: 6px;
-                border: 1px solid var(--border);
-                font-family: 'JetBrains Mono', monospace;
-                color: var(--accent-purple);
-                margin: 0 4px;
-                font-size: 0.9rem;
+                font-family: 'Courier New', monospace;
+                color: #f0f0f0;
+                margin: 0 0.2rem;
+                border: 1px solid rgba(139, 92, 246, 0.2);
             }
             
-            /* STATS SECTION */
-            .stats-section {
-                animation: fadeIn 0.8s ease-out 0.6s both;
-            }
-            
-            .stats-card {
-                background: var(--bg-secondary);
-                border-radius: 16px;
-                padding: 40px;
-                border: 1px solid var(--border);
-                box-shadow: 0 8px 32px rgba(0, 0, 0, 0.2);
-                height: fit-content;
-            }
-            
-            .stats-header {
-                display: flex;
-                justify-content: space-between;
-                align-items: center;
-                margin-bottom: 32px;
-                padding-bottom: 20px;
-                border-bottom: 1px solid var(--border);
-            }
-            
-            .stats-title {
-                font-size: 1.8rem;
-                color: var(--accent-green);
-                font-weight: 600;
-            }
-            
-            .refresh-btn {
-                padding: 10px 20px;
-                background: var(--bg-tertiary);
-                border: 1px solid var(--border);
-                color: var(--text-secondary);
-                border-radius: 8px;
-                font-weight: 500;
-                cursor: pointer;
-                transition: all 0.2s;
-                display: flex;
-                align-items: center;
-                gap: 8px;
-            }
-            
-            .refresh-btn:hover {
-                background: var(--border);
-                color: var(--text-primary);
-            }
-            
-            .stats-grid {
-                display: grid;
-                grid-template-columns: repeat(3, 1fr);
-                gap: 20px;
-                margin-bottom: 30px;
-            }
-            
-            @media (max-width: 768px) {
-                .stats-grid {
-                    grid-template-columns: repeat(2, 1fr);
-                }
-            }
-            
-            @media (max-width: 480px) {
-                .stats-grid {
-                    grid-template-columns: 1fr;
-                }
-            }
-            
-            .stat-item {
-                background: var(--bg-tertiary);
-                border-radius: 12px;
-                padding: 24px;
-                text-align: center;
-                border: 1px solid var(--border);
-                transition: all 0.2s;
-            }
-            
-            .stat-item:hover {
-                transform: translateY(-4px);
-                border-color: var(--accent-blue);
-                box-shadow: 0 8px 24px rgba(0, 0, 0, 0.2);
-            }
-            
-            .stat-value {
-                font-size: 2.5rem;
-                font-weight: 700;
-                margin: 12px 0;
-                color: var(--accent-blue);
-                font-family: 'Inter', sans-serif;
-            }
-            
-            .stat-label {
-                color: var(--text-secondary);
-                font-size: 0.9rem;
-                text-transform: uppercase;
-                letter-spacing: 1px;
-                font-weight: 600;
-            }
-            
-            /* BOT STATUS */
-            .status-container {
-                margin-top: 40px;
-                text-align: center;
-            }
-            
-            .status-badge {
-                display: inline-flex;
-                align-items: center;
-                gap: 12px;
-                padding: 12px 24px;
-                background: var(--bg-tertiary);
-                border: 1px solid var(--border);
-                border-radius: 24px;
-                font-weight: 600;
-                font-size: 1rem;
-                backdrop-filter: blur(10px);
-            }
-            
-            .status-badge.online {
-                border-color: var(--success);
-                color: var(--accent-green);
-            }
-            
-            .status-badge.offline {
-                border-color: var(--danger);
-                color: var(--danger);
-            }
-            
-            .status-dot {
-                width: 8px;
-                height: 8px;
-                border-radius: 50%;
-            }
-            
-            .status-dot.online {
-                background: var(--accent-green);
-                box-shadow: 0 0 8px var(--accent-green);
-                animation: pulse 2s infinite;
-            }
-            
-            .status-dot.offline {
-                background: var(--danger);
-                box-shadow: 0 0 8px var(--danger);
-            }
-            
-            /* FOOTER */
+            /* Footer */
             .footer {
-                margin-top: 60px;
                 text-align: center;
-                padding: 30px;
-                color: var(--text-tertiary);
+                margin-top: 3rem;
+                color: #64748b;
                 font-size: 0.9rem;
-                border-top: 1px solid var(--border);
-                position: relative;
-                z-index: 2;
+                animation: fadeIn 1s ease-out 0.4s both;
             }
             
-            .footer-links {
-                display: flex;
-                justify-content: center;
-                gap: 30px;
-                margin-top: 20px;
-                flex-wrap: wrap;
+            /* Animations */
+            @keyframes fadeInDown {
+                from {
+                    opacity: 0;
+                    transform: translateY(-30px);
+                }
+                to {
+                    opacity: 1;
+                    transform: translateY(0);
+                }
             }
             
-            .footer-link {
-                color: var(--text-secondary);
-                text-decoration: none;
-                transition: all 0.2s;
-                display: flex;
-                align-items: center;
-                gap: 8px;
-                font-size: 0.9rem;
-            }
-            
-            .footer-link:hover {
-                color: var(--accent-blue);
-            }
-            
-            /* ANIMATIONS */
-            @keyframes fadeIn {
-                from { opacity: 0; }
-                to { opacity: 1; }
-            }
-            
-            @keyframes slideUp {
+            @keyframes fadeInUp {
                 from {
                     opacity: 0;
                     transform: translateY(30px);
@@ -660,232 +473,108 @@ def home():
                 }
             }
             
-            @keyframes pulse {
-                0%, 100% { opacity: 1; }
-                50% { opacity: 0.5; }
+            @keyframes fadeIn {
+                from { opacity: 0; }
+                to { opacity: 1; }
             }
             
-            /* RESPONSIVE */
+            /* Responsive */
             @media (max-width: 768px) {
-                .container {
-                    padding: 20px;
-                    gap: 30px;
+                .title {
+                    font-size: 3rem;
                 }
                 
-                .logo {
-                    font-size: 2.5rem;
+                .login-card {
+                    padding: 2rem;
+                    margin: 1rem;
                 }
                 
-                .login-card,
-                .info-card,
-                .stats-card {
-                    padding: 30px 24px;
-                }
-                
-                .stats-header {
-                    flex-direction: column;
-                    gap: 20px;
-                    text-align: center;
-                }
-                
-                .tagline {
-                    gap: 8px;
-                }
-                
-                .tag {
-                    padding: 6px 12px;
-                    font-size: 0.8rem;
+                .goblin {
+                    font-size: 6rem;
                 }
             }
             
             @media (max-width: 480px) {
-                .logo {
-                    font-size: 2rem;
+                .title {
+                    font-size: 2.5rem;
                 }
                 
                 .subtitle {
                     font-size: 1rem;
                 }
                 
-                .login-btn {
-                    padding: 14px;
-                    font-size: 0.95rem;
+                .login-card {
+                    padding: 1.5rem;
                 }
                 
-                .stats-title {
-                    font-size: 1.5rem;
+                .card-title {
+                    font-size: 1.8rem;
                 }
                 
-                .stat-value {
-                    font-size: 2rem;
+                .key-input {
+                    font-size: 1rem;
+                    padding: 1rem 1rem 1rem 3rem;
                 }
             }
         </style>
     </head>
     <body>
-        <div class="grid-bg"></div>
+        <!-- Background Elements -->
+        <div class="cave-bg"></div>
+        <div class="goblin">👺</div>
+        <div class="goblin">👹</div>
+        <div class="goblin">🤡</div>
         
-        <div class="container">
-            <div class="header-section">
-                <div class="logo-container">
-                    <div class="logo">SOT <span>TDM</span> SYSTEM</div>
-                    <div class="subtitle">
-                        Secure access portal for Sea of Thieves Team Deathmatch
-                    </div>
-                    
-                    <div class="tagline">
-                        <div class="tag">
-                            <i class="fas fa-shield-alt"></i> Secure
-                        </div>
-                        <div class="tag">
-                            <i class="fas fa-bolt"></i> Fast
-                        </div>
-                        <div class="tag">
-                            <i class="fas fa-users"></i> Community
-                        </div>
-                        <div class="tag">
-                            <i class="fas fa-chart-line"></i> Stats
-                        </div>
-                    </div>
-                </div>
-                
-                <div class="login-card">
+        <!-- Main Content -->
+        <div class="main-container">
+            <div class="header">
+                <h1 class="title">Goblin Cave</h1>
+                <p class="subtitle">Enter the cave with your API key to access the SOT TDM System</p>
+            </div>
+            
+            <div class="login-card">
+                <div class="card-header">
                     <div class="card-title">
-                        <i class="fas fa-key"></i> API Key Access
+                        🔑 API Key Access
                     </div>
-                    
-                    <div class="input-group">
-                        <i class="fas fa-key input-icon"></i>
-                        <input type="text" 
-                               class="key-input" 
-                               id="apiKey" 
-                               placeholder="GOB-XXXXXXXXXXXXXXXXXXXX"
-                               autocomplete="off"
-                               maxlength="24">
-                    </div>
-                    
-                    <button class="login-btn" onclick="validateKey()" id="loginBtn">
-                        <i class="fas fa-sign-in-alt"></i> Access Dashboard
-                    </button>
-                    
-                    <div class="error-box" id="errorMessage">
-                        <i class="fas fa-exclamation-circle"></i>
-                        <span id="errorText">Invalid API key format</span>
+                    <div class="card-subtitle">
+                        Enter your GOB-XXXX... key to continue
                     </div>
                 </div>
                 
-                <div class="info-card">
+                <div class="key-input-container">
+                    <div class="key-icon">🗝️</div>
+                    <input 
+                        type="text" 
+                        class="key-input" 
+                        id="apiKey" 
+                        placeholder="GOB-XXXXXXXXXXXXXXXXXXXX"
+                        autocomplete="off"
+                        maxlength="24">
+                </div>
+                
+                <button class="login-btn" onclick="validateKey()" id="loginBtn">
+                    <span id="btnText">Enter the Cave</span>
+                    <span id="btnIcon">⤵️</span>
+                </button>
+                
+                <div class="error-message" id="errorMessage">
+                    <div id="errorText">Invalid API key format</div>
+                </div>
+                
+                <div class="info-box">
                     <div class="info-title">
-                        <i class="fas fa-info-circle"></i> Getting Started
+                        ℹ️ Need a key?
                     </div>
-                    
-                    <div class="steps-list">
-                        <div class="step">
-                            <div class="step-number">1</div>
-                            <div class="step-content">
-                                Use <code>/register your_name</code> in Discord to get your API key
-                            </div>
-                        </div>
-                        
-                        <div class="step">
-                            <div class="step-number">2</div>
-                            <div class="step-content">
-                                Copy your <code>GOB-XXXXXXXXXXXXXXX</code> key from the bot response
-                            </div>
-                        </div>
-                        
-                        <div class="step">
-                            <div class="step-number">3</div>
-                            <div class="step-content">
-                                Enter the key above to access your personal dashboard
-                            </div>
-                        </div>
-                        
-                        <div class="step">
-                            <div class="step-number">4</div>
-                            <div class="step-content">
-                                Use <code>/key</code> in Discord to retrieve your key anytime
-                            </div>
-                        </div>
-                    </div>
-                </div>
-                
-                <div class="status-container">
-                    <div class="status-badge {{ 'online' if bot_active else 'offline' }}">
-                        <div class="status-dot {{ 'online' if bot_active else 'offline' }}"></div>
-                        <span>SYSTEM STATUS: {{ 'ONLINE' if bot_active else 'OFFLINE' }}</span>
+                    <div class="info-text">
+                        Use <span class="info-code">/register your_name</span> in Discord to get your API key.
+                        Then use <span class="info-code">/key</span> to retrieve it anytime.
                     </div>
                 </div>
             </div>
             
-            <div class="stats-section">
-                <div class="stats-card">
-                    <div class="stats-header">
-                        <div class="stats-title">
-                            <i class="fas fa-chart-bar"></i> System Statistics
-                        </div>
-                        <button class="refresh-btn" onclick="loadStats()">
-                            <i class="fas fa-sync-alt"></i> Refresh
-                        </button>
-                    </div>
-                    
-                    <div class="stats-grid">
-                        <div class="stat-item">
-                            <div class="stat-value" id="totalPlayers">{{ stats['total_players'] }}</div>
-                            <div class="stat-label">Total Players</div>
-                        </div>
-                        
-                        <div class="stat-item">
-                            <div class="stat-value" id="totalKills">{{ "{:,}".format(stats['total_kills']) }}</div>
-                            <div class="stat-label">Total Kills</div>
-                        </div>
-                        
-                        <div class="stat-item">
-                            <div class="stat-value" id="totalGames">{{ stats['total_games'] }}</div>
-                            <div class="stat-label">Games Played</div>
-                        </div>
-                    </div>
-                    
-                    <div style="margin-top: 30px; padding: 20px; background: var(--bg-tertiary); border-radius: 12px; border-left: 4px solid var(--accent-green);">
-                        <div style="display: flex; align-items: center; gap: 12px; margin-bottom: 15px;">
-                            <i class="fab fa-discord" style="color: var(--accent-green); font-size: 1.5rem;"></i>
-                            <h3 style="color: var(--accent-green); margin: 0; font-size: 1.2rem;">Need Help?</h3>
-                        </div>
-                        <p style="color: var(--text-secondary); margin-bottom: 15px; line-height: 1.5; font-size: 0.95rem;">
-                            Join our Discord community to get your API key and access all features.
-                        </p>
-                        <button class="login-btn" style="background: var(--accent-green);" onclick="showDiscordInfo()">
-                            <i class="fab fa-discord"></i> Join Discord
-                        </button>
-                    </div>
-                </div>
-            </div>
-        </div>
-        
-        <div class="footer">
-            <div style="margin-bottom: 20px; display: flex; align-items: center; justify-content: center; gap: 20px;">
-                <span>SOT TDM System v2.0</span>
-                <i class="fas fa-circle" style="font-size: 4px; color: var(--text-tertiary);"></i>
-                <span>Secure Access Portal</span>
-            </div>
-            
-            <div class="footer-links">
-                <a href="#" class="footer-link" onclick="showDiscordInfo()">
-                    <i class="fab fa-discord"></i> Discord
-                </a>
-                <a href="#" class="footer-link" onclick="downloadTool()">
-                    <i class="fas fa-download"></i> Game Tool
-                </a>
-                <a href="/health" class="footer-link" target="_blank">
-                    <i class="fas fa-server"></i> System Status
-                </a>
-                <a href="#" class="footer-link" onclick="showSupport()">
-                    <i class="fas fa-question-circle"></i> Support
-                </a>
-            </div>
-            
-            <div style="margin-top: 20px; font-size: 0.8rem; opacity: 0.8;">
-                &copy; {{ datetime.now().year }} SOT TDM System. All rights reserved.
+            <div class="footer">
+                <p>SOT TDM System • Goblin Cave v1.0 • Secure Access Portal</p>
             </div>
         </div>
         
@@ -895,6 +584,8 @@ def home():
                 const errorDiv = document.getElementById('errorMessage');
                 const errorText = document.getElementById('errorText');
                 const btn = document.getElementById('loginBtn');
+                const btnText = document.getElementById('btnText');
+                const btnIcon = document.getElementById('btnIcon');
                 
                 // Frontend validation
                 const keyPattern = /^GOB-[A-Z0-9]{20}$/;
@@ -912,7 +603,8 @@ def home():
                 }
                 
                 // Visual feedback
-                btn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Validating...';
+                btnText.textContent = "Validating...";
+                btnIcon.textContent = "⏳";
                 btn.disabled = true;
                 
                 try {
@@ -925,108 +617,34 @@ def home():
                     const data = await response.json();
                     
                     if (data.valid) {
-                        btn.innerHTML = '<i class="fas fa-check"></i> Access Granted';
-                        btn.style.background = 'var(--accent-green)';
+                        btnText.textContent = "Access Granted!";
+                        btnIcon.textContent = "✅";
+                        btn.style.background = 'linear-gradient(90deg, #22c55e, #10b981)';
                         
                         setTimeout(() => {
                             window.location.href = '/dashboard';
-                        }, 500);
+                        }, 800);
                     } else {
                         errorText.textContent = data.error || 'Invalid API key';
                         errorDiv.style.display = 'block';
                         
-                        btn.innerHTML = '<i class="fas fa-sign-in-alt"></i> Access Dashboard';
+                        btnText.textContent = "Enter the Cave";
+                        btnIcon.textContent = "⤵️";
                         btn.disabled = false;
                     }
                 } catch (error) {
                     errorText.textContent = 'Connection error. Please try again.';
                     errorDiv.style.display = 'block';
                     
-                    btn.innerHTML = '<i class="fas fa-sign-in-alt"></i> Access Dashboard';
+                    btnText.textContent = "Enter the Cave";
+                    btnIcon.textContent = "⤵️";
                     btn.disabled = false;
                 }
-            }
-            
-            async function loadStats() {
-                const btn = event?.target;
-                if (btn) {
-                    const originalHtml = btn.innerHTML;
-                    btn.innerHTML = '<i class="fas fa-spinner fa-spin"></i>';
-                    btn.disabled = true;
-                }
-                
-                try {
-                    const response = await fetch('/api/stats');
-                    const data = await response.json();
-                    
-                    document.getElementById('totalPlayers').textContent = data.total_players || '0';
-                    document.getElementById('totalKills').textContent = data.total_kills?.toLocaleString() || '0';
-                    document.getElementById('totalGames').textContent = data.total_games || '0';
-                    
-                    // Update status badge
-                    const statusBadge = document.querySelector('.status-badge');
-                    const statusDot = document.querySelector('.status-dot');
-                    const statusText = statusBadge.querySelector('span');
-                    
-                    if (data.bot_active) {
-                        statusBadge.className = 'status-badge online';
-                        statusDot.className = 'status-dot online';
-                        statusText.textContent = 'SYSTEM STATUS: ONLINE';
-                    } else {
-                        statusBadge.className = 'status-badge offline';
-                        statusDot.className = 'status-dot offline';
-                        statusText.textContent = 'SYSTEM STATUS: OFFLINE';
-                    }
-                    
-                    if (btn) {
-                        btn.innerHTML = '<i class="fas fa-check"></i>';
-                        setTimeout(() => {
-                            btn.innerHTML = originalHtml;
-                            btn.disabled = false;
-                        }, 500);
-                    }
-                    
-                } catch (error) {
-                    console.error('Error loading stats:', error);
-                    if (btn) {
-                        btn.innerHTML = '<i class="fas fa-exclamation-triangle"></i>';
-                        setTimeout(() => {
-                            btn.innerHTML = 'Refresh';
-                            btn.disabled = false;
-                        }, 1000);
-                    }
-                }
-            }
-            
-            function showDiscordInfo() {
-                alert('Join our Discord server to get your API key and access all features.');
-            }
-            
-            function downloadTool() {
-                const githubReleaseUrl = 'https://github.com/yourusername/sot-tdm-tool/releases/latest/download/sot_tdm_tool.exe';
-                
-                const link = document.createElement('a');
-                link.href = githubReleaseUrl;
-                link.download = 'sot_tdm_tool.exe';
-                link.style.display = 'none';
-                document.body.appendChild(link);
-                link.click();
-                document.body.removeChild(link);
-                
-                alert('Download started! Check your downloads folder.');
-            }
-            
-            function showSupport() {
-                alert('For support, please join our Discord server or create a ticket.');
             }
             
             // Auto-focus input on load
             document.addEventListener('DOMContentLoaded', function() {
                 document.getElementById('apiKey').focus();
-                
-                // Load stats every 30 seconds
-                loadStats();
-                setInterval(loadStats, 30000);
                 
                 // Add key validation on input
                 document.getElementById('apiKey').addEventListener('input', function(e) {
@@ -1045,7 +663,7 @@ def home():
         </script>
     </body>
     </html>
-    ''', stats=stats, bot_active=bot_active, datetime=datetime)
+    ''')
 
 @app.route('/api/validate-key', methods=['POST'])
 def api_validate_key():
@@ -1065,7 +683,7 @@ def api_validate_key():
         session.permanent = True
         session.modified = True
         
-        return jsonify({"valid": True, "user": user_data.get('in_game_name')})
+        return jsonify({"valid": True, "user": user_data.get('in_game_name'), "is_admin": user_data.get('is_admin', False)})
     else:
         return jsonify({"valid": False, "error": "Invalid API key"})
 
@@ -1121,32 +739,8 @@ def dashboard():
     <head>
         <meta charset="UTF-8">
         <meta name="viewport" content="width=device-width, initial-scale=1.0">
-        <title>Dashboard - {{ user_data.get('in_game_name', 'Player') }}</title>
-        <link rel="preconnect" href="https://fonts.googleapis.com">
-        <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-        <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=JetBrains+Mono:wght@300;400;500&display=swap" rel="stylesheet">
-        <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+        <title>Dashboard - Goblin Cave</title>
         <style>
-            :root {
-                /* Professional Dark Theme */
-                --bg-primary: #0d1117;
-                --bg-secondary: #161b22;
-                --bg-tertiary: #21262d;
-                --border: #30363d;
-                --text-primary: #c9d1d9;
-                --text-secondary: #8b949e;
-                --text-tertiary: #6e7681;
-                --accent-blue: #58a6ff;
-                --accent-green: #56d364;
-                --accent-yellow: #e3b341;
-                --accent-orange: #f78166;
-                --accent-purple: #bc8cff;
-                --success: #238636;
-                --warning: #9e6a03;
-                --danger: #da3633;
-                --info: #1f6feb;
-            }
-            
             * {
                 margin: 0;
                 padding: 0;
@@ -1154,77 +748,76 @@ def dashboard():
             }
             
             body {
-                font-family: 'Inter', sans-serif;
-                background: var(--bg-primary);
-                color: var(--text-primary);
+                font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+                background: linear-gradient(135deg, #0a0a0a 0%, #1a1a2e 100%);
+                color: #f0f0f0;
                 min-height: 100vh;
-                line-height: 1.6;
             }
             
-            .grid-bg {
+            /* Goblin Background */
+            .goblin-bg {
                 position: fixed;
-                width: 100%;
-                height: 100%;
                 top: 0;
                 left: 0;
+                width: 100%;
+                height: 100%;
                 background-image: 
-                    linear-gradient(rgba(88, 166, 255, 0.03) 1px, transparent 1px),
-                    linear-gradient(90deg, rgba(88, 166, 255, 0.03) 1px, transparent 1px);
-                background-size: 50px 50px;
-                z-index: -1;
-                pointer-events: none;
+                    radial-gradient(circle at 10% 20%, rgba(139, 92, 246, 0.1) 0%, transparent 25%),
+                    radial-gradient(circle at 90% 40%, rgba(34, 197, 94, 0.1) 0%, transparent 25%),
+                    radial-gradient(circle at 50% 80%, rgba(59, 130, 246, 0.1) 0%, transparent 25%);
+                z-index: -2;
             }
             
-            /* HEADER */
+            /* Header */
             .dashboard-header {
-                background: var(--bg-secondary);
-                border-bottom: 1px solid var(--border);
-                padding: 20px 40px;
+                background: rgba(30, 41, 59, 0.9);
+                backdrop-filter: blur(10px);
+                border-bottom: 1px solid rgba(139, 92, 246, 0.3);
+                padding: 1.5rem 2rem;
                 display: flex;
                 justify-content: space-between;
                 align-items: center;
                 position: sticky;
                 top: 0;
                 z-index: 100;
-                box-shadow: 0 4px 20px rgba(0, 0, 0, 0.1);
+                box-shadow: 0 4px 20px rgba(0, 0, 0, 0.3);
             }
             
             .header-left {
                 display: flex;
                 align-items: center;
-                gap: 20px;
+                gap: 1rem;
             }
             
             .logo {
                 font-size: 1.8rem;
-                font-weight: 700;
-                color: var(--accent-blue);
-            }
-            
-            .logo span {
-                color: var(--accent-green);
+                font-weight: 800;
+                background: linear-gradient(90deg, #8b5cf6, #22c55e);
+                -webkit-background-clip: text;
+                -webkit-text-fill-color: transparent;
+                background-clip: text;
             }
             
             .header-right {
                 display: flex;
                 align-items: center;
-                gap: 20px;
+                gap: 1.5rem;
             }
             
             .user-info {
                 display: flex;
                 align-items: center;
-                gap: 12px;
-                padding: 8px 16px;
-                background: var(--bg-tertiary);
-                border-radius: 8px;
-                border: 1px solid var(--border);
+                gap: 0.8rem;
+                padding: 0.8rem 1.2rem;
+                background: rgba(15, 23, 42, 0.8);
+                border-radius: 10px;
+                border: 1px solid rgba(139, 92, 246, 0.2);
             }
             
             .user-avatar {
-                width: 36px;
-                height: 36px;
-                background: var(--accent-blue);
+                width: 40px;
+                height: 40px;
+                background: linear-gradient(135deg, #8b5cf6, #22c55e);
                 border-radius: 50%;
                 display: flex;
                 align-items: center;
@@ -1241,53 +834,55 @@ def dashboard():
             
             .user-name {
                 font-weight: 600;
-                color: var(--text-primary);
+                color: #f0f0f0;
             }
             
             .user-rank {
                 font-size: 0.85rem;
-                color: var(--text-secondary);
+                color: #94a3b8;
             }
             
             .nav-links {
                 display: flex;
-                gap: 10px;
+                gap: 0.8rem;
             }
             
             .nav-link {
-                padding: 10px 20px;
-                background: var(--bg-tertiary);
-                border: 1px solid var(--border);
-                color: var(--text-secondary);
+                padding: 0.8rem 1.2rem;
+                background: rgba(15, 23, 42, 0.8);
+                border: 1px solid rgba(139, 92, 246, 0.2);
+                color: #94a3b8;
                 text-decoration: none;
                 border-radius: 8px;
                 font-weight: 500;
-                transition: all 0.2s;
+                transition: all 0.3s ease;
                 display: flex;
                 align-items: center;
-                gap: 8px;
+                gap: 0.5rem;
                 font-size: 0.95rem;
             }
             
             .nav-link:hover {
-                background: var(--border);
-                color: var(--text-primary);
+                background: rgba(139, 92, 246, 0.1);
+                color: #f0f0f0;
+                border-color: #8b5cf6;
+                transform: translateY(-2px);
             }
             
-            .nav-link.active {
-                background: var(--accent-blue);
-                color: white;
-                border-color: var(--accent-blue);
+            .nav-link.logout:hover {
+                background: rgba(239, 68, 68, 0.1);
+                border-color: #ef4444;
+                color: #fca5a5;
             }
             
-            /* MAIN CONTENT */
+            /* Main Content */
             .dashboard-container {
-                max-width: 1400px;
-                margin: 0 auto;
-                padding: 30px;
+                max-width: 1200px;
+                margin: 2rem auto;
+                padding: 0 2rem;
                 display: grid;
                 grid-template-columns: 2fr 1fr;
-                gap: 30px;
+                gap: 2rem;
                 position: relative;
                 z-index: 1;
             }
@@ -1298,76 +893,84 @@ def dashboard():
                 }
             }
             
-            /* PROFILE CARD */
+            /* Profile Card */
             .profile-card {
-                background: var(--bg-secondary);
-                border-radius: 16px;
-                padding: 30px;
-                border: 1px solid var(--border);
-                box-shadow: 0 8px 32px rgba(0, 0, 0, 0.1);
-                animation: fadeIn 0.8s ease-out;
+                background: rgba(30, 41, 59, 0.8);
+                backdrop-filter: blur(10px);
+                border-radius: 20px;
+                padding: 2.5rem;
+                border: 1px solid rgba(139, 92, 246, 0.3);
+                box-shadow: 
+                    0 20px 40px rgba(0, 0, 0, 0.3),
+                    inset 0 1px 0 rgba(255, 255, 255, 0.1);
             }
             
             .profile-header {
                 display: flex;
                 align-items: center;
-                gap: 24px;
-                margin-bottom: 30px;
-                padding-bottom: 24px;
-                border-bottom: 1px solid var(--border);
+                gap: 2rem;
+                margin-bottom: 2.5rem;
+                padding-bottom: 2rem;
+                border-bottom: 1px solid rgba(139, 92, 246, 0.2);
             }
             
             .profile-avatar {
-                width: 80px;
-                height: 80px;
-                background: linear-gradient(135deg, var(--accent-blue), var(--accent-purple));
+                width: 100px;
+                height: 100px;
+                background: linear-gradient(135deg, #8b5cf6, #22c55e);
                 border-radius: 50%;
                 display: flex;
                 align-items: center;
                 justify-content: center;
                 color: white;
-                font-size: 2rem;
+                font-size: 3rem;
                 font-weight: bold;
-                box-shadow: 0 8px 24px rgba(88, 166, 255, 0.2);
+                box-shadow: 0 10px 30px rgba(139, 92, 246, 0.3);
             }
             
             .profile-details h2 {
-                font-size: 2rem;
-                margin-bottom: 8px;
-                color: var(--text-primary);
+                font-size: 2.5rem;
+                margin-bottom: 0.5rem;
+                color: #f0f0f0;
+            }
+            
+            .profile-meta {
+                color: #94a3b8;
+                margin-bottom: 1rem;
+                font-size: 1rem;
             }
             
             .profile-tags {
                 display: flex;
-                gap: 8px;
-                margin-top: 12px;
+                gap: 0.8rem;
+                margin-top: 1rem;
                 flex-wrap: wrap;
             }
             
             .profile-tag {
-                padding: 6px 12px;
-                background: var(--bg-tertiary);
-                border: 1px solid var(--border);
+                padding: 0.5rem 1rem;
+                background: rgba(15, 23, 42, 0.8);
+                border: 1px solid rgba(139, 92, 246, 0.2);
                 border-radius: 20px;
-                font-size: 0.85rem;
-                color: var(--text-secondary);
+                font-size: 0.9rem;
+                color: #94a3b8;
                 display: flex;
                 align-items: center;
-                gap: 6px;
+                gap: 0.5rem;
             }
             
-            .profile-tag.admin {
-                background: rgba(227, 179, 65, 0.1);
-                border-color: rgba(227, 179, 65, 0.3);
-                color: var(--accent-yellow);
+            .profile-tag.prestige {
+                background: rgba(245, 158, 11, 0.1);
+                border-color: rgba(245, 158, 11, 0.3);
+                color: #fbbf24;
             }
             
-            /* STATS GRID */
+            /* Stats Grid */
             .stats-grid {
                 display: grid;
                 grid-template-columns: repeat(2, 1fr);
-                gap: 20px;
-                margin-bottom: 30px;
+                gap: 1.5rem;
+                margin-bottom: 2.5rem;
             }
             
             @media (max-width: 768px) {
@@ -1377,80 +980,94 @@ def dashboard():
             }
             
             .stat-card {
-                background: var(--bg-tertiary);
-                border-radius: 12px;
-                padding: 24px;
-                border: 1px solid var(--border);
-                transition: all 0.2s;
+                background: rgba(15, 23, 42, 0.8);
+                border-radius: 15px;
+                padding: 1.8rem;
+                border: 1px solid rgba(139, 92, 246, 0.2);
+                transition: all 0.3s ease;
             }
             
             .stat-card:hover {
-                transform: translateY(-4px);
-                border-color: var(--accent-blue);
-                box-shadow: 0 8px 24px rgba(0, 0, 0, 0.2);
+                transform: translateY(-5px);
+                border-color: #8b5cf6;
+                box-shadow: 0 10px 30px rgba(139, 92, 246, 0.2);
             }
             
             .stat-value {
-                font-size: 2.5rem;
-                font-weight: 700;
-                margin: 12px 0;
-                color: var(--accent-blue);
+                font-size: 3rem;
+                font-weight: 800;
+                margin: 0.5rem 0;
+                color: #8b5cf6;
+                text-shadow: 0 0 20px rgba(139, 92, 246, 0.3);
             }
             
+            .stat-value.win-rate { color: #22c55e; }
+            .stat-value.games { color: #3b82f6; }
+            .stat-value.prestige { color: #f59e0b; }
+            
             .stat-label {
-                color: var(--text-secondary);
-                font-size: 0.9rem;
+                color: #94a3b8;
+                font-size: 0.95rem;
                 text-transform: uppercase;
                 letter-spacing: 1px;
                 font-weight: 600;
             }
             
             .stat-detail {
-                color: var(--text-tertiary);
+                color: #64748b;
                 font-size: 0.9rem;
-                margin-top: 8px;
+                margin-top: 0.5rem;
             }
             
-            /* KEY SECTION */
+            /* Key Section */
             .key-section {
-                margin-top: 30px;
+                margin-top: 2.5rem;
+                padding-top: 2.5rem;
+                border-top: 1px solid rgba(139, 92, 246, 0.2);
             }
             
             .section-title {
-                font-size: 1.4rem;
-                color: var(--accent-blue);
-                margin-bottom: 20px;
+                font-size: 1.5rem;
+                color: #f0f0f0;
+                margin-bottom: 1.5rem;
                 display: flex;
                 align-items: center;
-                gap: 12px;
+                gap: 1rem;
             }
             
             .key-display {
-                background: var(--bg-tertiary);
-                border: 1px solid var(--border);
+                background: rgba(15, 23, 42, 0.8);
+                border: 1px solid rgba(139, 92, 246, 0.2);
                 border-radius: 12px;
-                padding: 20px;
-                margin: 20px 0;
-                font-family: 'JetBrains Mono', monospace;
-                color: var(--text-primary);
+                padding: 1.5rem;
+                margin: 1.5rem 0;
+                font-family: 'Courier New', monospace;
+                color: #f0f0f0;
                 word-break: break-all;
                 text-align: center;
                 cursor: pointer;
-                transition: all 0.2s;
-                font-size: 1.1rem;
+                transition: all 0.3s ease;
+                font-size: 1.2rem;
                 position: relative;
+                overflow: hidden;
             }
             
             .key-display:hover {
-                background: var(--border);
-                border-color: var(--accent-green);
+                background: rgba(139, 92, 246, 0.1);
+                border-color: #8b5cf6;
+                transform: translateY(-2px);
+                box-shadow: 0 5px 20px rgba(139, 92, 246, 0.2);
+            }
+            
+            .key-display:active {
+                transform: translateY(0);
             }
             
             .action-buttons {
                 display: grid;
-                grid-template-columns: repeat(2, 1fr);
-                gap: 15px;
-                margin-top: 20px;
+                grid-template-columns: 1fr 1fr;
+                gap: 1rem;
+                margin-top: 1.5rem;
             }
             
             @media (max-width: 480px) {
@@ -1460,88 +1077,93 @@ def dashboard():
             }
             
             .action-btn {
-                padding: 16px;
-                background: var(--accent-blue);
+                padding: 1.2rem;
+                background: linear-gradient(90deg, #8b5cf6, #22c55e);
                 color: white;
                 border: none;
                 border-radius: 12px;
                 font-weight: 600;
                 cursor: pointer;
-                transition: all 0.2s;
+                transition: all 0.3s ease;
                 display: flex;
                 align-items: center;
                 justify-content: center;
-                gap: 12px;
+                gap: 0.8rem;
                 font-size: 1rem;
             }
             
             .action-btn:hover {
-                background: #388bfd;
                 transform: translateY(-2px);
-                box-shadow: 0 8px 16px rgba(88, 166, 255, 0.2);
+                box-shadow: 0 10px 20px rgba(139, 92, 246, 0.3);
             }
             
             .action-btn.secondary {
-                background: var(--bg-tertiary);
-                color: var(--text-secondary);
-                border: 1px solid var(--border);
+                background: rgba(15, 23, 42, 0.8);
+                border: 1px solid rgba(139, 92, 246, 0.3);
+                color: #94a3b8;
             }
             
             .action-btn.secondary:hover {
-                background: var(--border);
-                color: var(--text-primary);
+                background: rgba(139, 92, 246, 0.1);
+                color: #f0f0f0;
+                border-color: #8b5cf6;
             }
             
-            /* LEADERBOARD */
+            /* Leaderboard */
             .leaderboard-card {
-                background: var(--bg-secondary);
-                border-radius: 16px;
-                padding: 30px;
-                border: 1px solid var(--border);
-                box-shadow: 0 8px 32px rgba(0, 0, 0, 0.1);
+                background: rgba(30, 41, 59, 0.8);
+                backdrop-filter: blur(10px);
+                border-radius: 20px;
+                padding: 2.5rem;
+                border: 1px solid rgba(139, 92, 246, 0.3);
+                box-shadow: 
+                    0 20px 40px rgba(0, 0, 0, 0.3),
+                    inset 0 1px 0 rgba(255, 255, 255, 0.1);
                 height: fit-content;
-                animation: fadeIn 0.8s ease-out 0.2s both;
             }
             
             .card-header {
                 display: flex;
                 justify-content: space-between;
                 align-items: center;
-                margin-bottom: 24px;
-                padding-bottom: 20px;
-                border-bottom: 1px solid var(--border);
+                margin-bottom: 2rem;
+                padding-bottom: 1.5rem;
+                border-bottom: 1px solid rgba(139, 92, 246, 0.2);
             }
             
             .card-title {
-                font-size: 1.6rem;
-                color: var(--accent-green);
-                font-weight: 600;
+                font-size: 1.8rem;
+                color: #22c55e;
+                font-weight: 700;
             }
             
             .refresh-btn {
-                padding: 10px 20px;
-                background: var(--bg-tertiary);
-                border: 1px solid var(--border);
-                color: var(--text-secondary);
+                padding: 0.8rem 1.2rem;
+                background: rgba(15, 23, 42, 0.8);
+                border: 1px solid rgba(139, 92, 246, 0.2);
+                color: #94a3b8;
                 border-radius: 8px;
                 font-weight: 500;
                 cursor: pointer;
-                transition: all 0.2s;
+                transition: all 0.3s ease;
                 display: flex;
                 align-items: center;
-                gap: 8px;
+                gap: 0.5rem;
                 font-size: 0.95rem;
             }
             
             .refresh-btn:hover {
-                background: var(--border);
-                color: var(--text-primary);
+                background: rgba(139, 92, 246, 0.1);
+                color: #f0f0f0;
+                border-color: #8b5cf6;
+                transform: translateY(-2px);
             }
             
             .leaderboard-list {
                 max-height: 500px;
                 overflow-y: auto;
                 padding-right: 10px;
+                margin-bottom: 2rem;
             }
             
             .leaderboard-list::-webkit-scrollbar {
@@ -1549,140 +1171,186 @@ def dashboard():
             }
             
             .leaderboard-list::-webkit-scrollbar-track {
-                background: var(--bg-tertiary);
+                background: rgba(15, 23, 42, 0.8);
                 border-radius: 3px;
             }
             
             .leaderboard-list::-webkit-scrollbar-thumb {
-                background: var(--border);
+                background: rgba(139, 92, 246, 0.5);
                 border-radius: 3px;
             }
             
             .leaderboard-item {
                 display: flex;
                 align-items: center;
-                padding: 16px;
-                margin-bottom: 12px;
-                background: var(--bg-tertiary);
+                padding: 1.2rem;
+                margin-bottom: 0.8rem;
+                background: rgba(15, 23, 42, 0.8);
                 border-radius: 12px;
-                border: 1px solid var(--border);
-                transition: all 0.2s;
+                border: 1px solid rgba(139, 92, 246, 0.2);
+                transition: all 0.3s ease;
             }
             
             .leaderboard-item:hover {
-                transform: translateX(4px);
-                border-color: var(--accent-blue);
+                transform: translateX(5px);
+                border-color: #8b5cf6;
+                box-shadow: 0 5px 15px rgba(139, 92, 246, 0.2);
             }
             
             .leaderboard-item.current-user {
-                background: rgba(88, 166, 255, 0.1);
-                border-color: var(--accent-blue);
+                background: rgba(139, 92, 246, 0.1);
+                border-color: #8b5cf6;
             }
             
             .rank {
-                font-size: 1.2rem;
-                font-weight: 700;
-                width: 40px;
+                font-size: 1.3rem;
+                font-weight: 800;
+                width: 50px;
                 text-align: center;
-                color: var(--text-secondary);
+                color: #94a3b8;
             }
             
-            .rank-1 { color: var(--accent-yellow); }
-            .rank-2 { color: #c0c0c0; }
-            .rank-3 { color: #cd7f32; }
+            .rank-1 { color: #fbbf24; }
+            .rank-2 { color: #d1d5db; }
+            .rank-3 { color: #f59e0b; }
             
             .player-info {
                 flex-grow: 1;
-                margin-left: 16px;
+                margin-left: 1.2rem;
             }
             
             .player-name {
                 font-weight: 600;
-                color: var(--text-primary);
+                color: #f0f0f0;
                 display: flex;
                 align-items: center;
-                gap: 8px;
-                margin-bottom: 4px;
+                gap: 0.8rem;
+                margin-bottom: 0.4rem;
             }
             
             .player-stats {
                 display: flex;
-                gap: 16px;
+                gap: 1.5rem;
                 font-size: 0.9rem;
-                color: var(--text-secondary);
+                color: #94a3b8;
             }
             
-            .stat-value {
-                font-size: 1rem;
-                color: var(--accent-green);
+            .player-kd {
+                color: #22c55e;
                 font-weight: 600;
             }
             
-            /* FOOTER */
-            .dashboard-footer {
-                margin-top: 40px;
-                padding: 30px;
-                text-align: center;
-                color: var(--text-tertiary);
+            .player-kills {
+                color: #3b82f6;
+                font-weight: 600;
+            }
+            
+            /* Your Rank Section */
+            .your-rank {
+                background: rgba(15, 23, 42, 0.8);
+                border-radius: 15px;
+                padding: 1.8rem;
+                border: 1px solid rgba(139, 92, 246, 0.3);
+                border-left: 5px solid #22c55e;
+            }
+            
+            .your-rank-header {
+                display: flex;
+                align-items: center;
+                gap: 1rem;
+                margin-bottom: 1.5rem;
+            }
+            
+            .your-rank-title {
+                font-size: 1.2rem;
+                color: #22c55e;
+                font-weight: 600;
+            }
+            
+            .rank-stats {
+                display: flex;
+                justify-content: space-between;
+                align-items: center;
+            }
+            
+            .rank-number {
+                font-size: 3rem;
+                font-weight: 800;
+                color: #8b5cf6;
+            }
+            
+            .rank-kd {
+                font-size: 2.5rem;
+                font-weight: 800;
+                color: #22c55e;
+            }
+            
+            .rank-label {
+                color: #94a3b8;
                 font-size: 0.9rem;
-                border-top: 1px solid var(--border);
+                margin-top: 0.5rem;
+            }
+            
+            /* Footer */
+            .dashboard-footer {
+                margin-top: 3rem;
+                padding: 2rem;
+                text-align: center;
+                color: #64748b;
+                font-size: 0.9rem;
+                border-top: 1px solid rgba(139, 92, 246, 0.2);
             }
             
             .footer-links {
                 display: flex;
                 justify-content: center;
-                gap: 30px;
-                margin-top: 20px;
+                gap: 2rem;
+                margin-top: 1.5rem;
                 flex-wrap: wrap;
             }
             
             .footer-link {
-                color: var(--text-secondary);
+                color: #94a3b8;
                 text-decoration: none;
-                transition: all 0.2s;
+                transition: all 0.3s ease;
                 display: flex;
                 align-items: center;
-                gap: 8px;
+                gap: 0.5rem;
                 font-size: 0.9rem;
             }
             
             .footer-link:hover {
-                color: var(--accent-blue);
+                color: #f0f0f0;
+                text-shadow: 0 0 10px rgba(139, 92, 246, 0.5);
             }
             
-            /* ANIMATIONS */
-            @keyframes fadeIn {
-                from { opacity: 0; }
-                to { opacity: 1; }
-            }
-            
-            /* RESPONSIVE */
+            /* Responsive */
             @media (max-width: 768px) {
                 .dashboard-header {
                     flex-direction: column;
-                    gap: 20px;
-                    padding: 20px;
+                    gap: 1.5rem;
+                    padding: 1.5rem;
                 }
                 
                 .dashboard-container {
-                    padding: 20px;
-                    gap: 25px;
+                    padding: 1rem;
+                    gap: 1.5rem;
                 }
                 
                 .profile-header {
                     flex-direction: column;
                     text-align: center;
-                    gap: 20px;
+                    gap: 1.5rem;
                 }
                 
                 .profile-avatar {
-                    width: 70px;
-                    height: 70px;
-                    font-size: 1.8rem;
+                    width: 80px;
+                    height: 80px;
+                    font-size: 2.5rem;
                 }
                 
                 .profile-details h2 {
-                    font-size: 1.8rem;
+                    font-size: 2rem;
                 }
                 
                 .nav-links {
@@ -1691,13 +1359,18 @@ def dashboard():
                 }
                 
                 .stat-value {
-                    font-size: 2rem;
+                    font-size: 2.5rem;
                 }
                 
                 .card-header {
                     flex-direction: column;
-                    gap: 20px;
+                    gap: 1.5rem;
                     text-align: center;
+                }
+                
+                .player-stats {
+                    flex-wrap: wrap;
+                    gap: 0.8rem;
                 }
             }
             
@@ -1709,28 +1382,23 @@ def dashboard():
                 .user-info {
                     flex-direction: column;
                     text-align: center;
-                    padding: 12px;
+                    padding: 1rem;
                 }
                 
                 .stats-grid {
                     grid-template-columns: 1fr;
                 }
-                
-                .player-stats {
-                    flex-wrap: wrap;
-                    gap: 8px;
-                }
             }
         </style>
     </head>
     <body>
-        <div class="grid-bg"></div>
+        <div class="goblin-bg"></div>
         
         <!-- Header -->
         <div class="dashboard-header">
             <div class="header-left">
-                <div class="logo">SOT <span>TDM</span></div>
-                <div style="color: var(--text-tertiary); font-size: 0.9rem;">
+                <div class="logo">Goblin Cave</div>
+                <div style="color: #94a3b8; font-size: 0.9rem;">
                     Player Dashboard
                 </div>
             </div>
@@ -1747,16 +1415,16 @@ def dashboard():
                 </div>
                 
                 <div class="nav-links">
-                    <a href="/dashboard" class="nav-link active">
-                        <i class="fas fa-home"></i> Dashboard
+                    <a href="/dashboard" class="nav-link" style="background: rgba(139, 92, 246, 0.1); color: #f0f0f0; border-color: #8b5cf6;">
+                        <span>🏠</span> Dashboard
                     </a>
                     {% if user_data.get('is_admin') %}
                     <a href="/admin" class="nav-link">
-                        <i class="fas fa-cog"></i> Admin
+                        <span>👑</span> Admin
                     </a>
                     {% endif %}
-                    <a href="/logout" class="nav-link">
-                        <i class="fas fa-sign-out-alt"></i> Logout
+                    <a href="/logout" class="nav-link logout">
+                        <span>🚪</span> Logout
                     </a>
                 </div>
             </div>
@@ -1773,21 +1441,19 @@ def dashboard():
                         </div>
                         <div class="profile-details">
                             <h2>{{ user_data.get('in_game_name', 'Player') }}</h2>
-                            <div style="color: var(--text-secondary); margin-bottom: 10px;">
-                                <i class="fas fa-calendar"></i> Joined: {{ user_data.get('created_at', '')[:10] }}
+                            <div class="profile-meta">
+                                <span>📅 Joined: {{ user_data.get('created_at', '')[:10] }}</span>
+                                {% if user_data.get('is_admin') %}
+                                <span style="margin-left: 1rem;">👑 Administrator</span>
+                                {% endif %}
                             </div>
                             <div class="profile-tags">
-                                <div class="profile-tag">
-                                    <i class="fas fa-crown"></i> Prestige {{ user_data.get('prestige', 0) }}
+                                <div class="profile-tag prestige">
+                                    <span>👑</span> Prestige {{ user_data.get('prestige', 0) }}
                                 </div>
                                 <div class="profile-tag">
-                                    <i class="fas fa-gamepad"></i> {{ total_games }} Games
+                                    <span>🎮</span> {{ total_games }} Games
                                 </div>
-                                {% if user_data.get('is_admin') %}
-                                <div class="profile-tag admin">
-                                    <i class="fas fa-shield-alt"></i> Administrator
-                                </div>
-                                {% endif %}
                             </div>
                         </div>
                     </div>
@@ -1802,7 +1468,7 @@ def dashboard():
                         </div>
                         
                         <div class="stat-card">
-                            <div class="stat-value">{{ "%.1f"|format(win_rate) }}%</div>
+                            <div class="stat-value win-rate">{{ "%.1f"|format(win_rate) }}%</div>
                             <div class="stat-label">Win Rate</div>
                             <div class="stat-detail">
                                 {{ wins }} wins / {{ losses }} losses
@@ -1810,7 +1476,7 @@ def dashboard():
                         </div>
                         
                         <div class="stat-card">
-                            <div class="stat-value">{{ total_games }}</div>
+                            <div class="stat-value games">{{ total_games }}</div>
                             <div class="stat-label">Games Played</div>
                             <div class="stat-detail">
                                 Total matches completed
@@ -1818,7 +1484,7 @@ def dashboard():
                         </div>
                         
                         <div class="stat-card">
-                            <div class="stat-value">{{ user_data.get('prestige', 0) }}</div>
+                            <div class="stat-value prestige">{{ user_data.get('prestige', 0) }}</div>
                             <div class="stat-label">Prestige Level</div>
                             <div class="stat-detail">
                                 Current prestige rank
@@ -1828,10 +1494,10 @@ def dashboard():
                     
                     <div class="key-section">
                         <div class="section-title">
-                            <i class="fas fa-key"></i> Your API Key
+                            <span>🗝️</span> Your API Key
                         </div>
                         
-                        <p style="color: var(--text-secondary); margin-bottom: 20px; line-height: 1.5;">
+                        <p style="color: #94a3b8; margin-bottom: 1.5rem; line-height: 1.6;">
                             This key uniquely identifies you in the system. Keep it secure.
                         </p>
                         
@@ -1841,10 +1507,10 @@ def dashboard():
                         
                         <div class="action-buttons">
                             <button class="action-btn" onclick="copyKey()">
-                                <i class="fas fa-copy"></i> Copy Key
+                                <span>📋</span> Copy Key
                             </button>
                             <button class="action-btn secondary" onclick="downloadTool()">
-                                <i class="fas fa-download"></i> Download Tool
+                                <span>📥</span> Download Tool
                             </button>
                         </div>
                     </div>
@@ -1855,10 +1521,10 @@ def dashboard():
             <div class="leaderboard-card">
                 <div class="card-header">
                     <div class="card-title">
-                        <i class="fas fa-trophy"></i> Global Leaderboard
+                        <span>🏆</span> Global Leaderboard
                     </div>
                     <button class="refresh-btn" onclick="loadLeaderboard()">
-                        <i class="fas fa-sync-alt"></i> Refresh
+                        <span>🔄</span> Refresh
                     </button>
                 </div>
                 
@@ -1872,49 +1538,49 @@ def dashboard():
                             <div class="player-name">
                                 {{ player.name }}
                                 {% if player.api_key == session['user_key'] %}
-                                <span style="font-size: 0.8rem; color: var(--accent-blue);">
-                                    <i class="fas fa-user"></i> You
+                                <span style="font-size: 0.8rem; color: #8b5cf6;">
+                                    <span>👤</span> You
                                 </span>
                                 {% endif %}
                                 {% if player.prestige > 0 %}
-                                <span style="font-size: 0.8rem; color: var(--accent-yellow);">
+                                <span style="font-size: 0.8rem; color: #f59e0b;">
                                     P{{ player.prestige }}
                                 </span>
                                 {% endif %}
                             </div>
                             <div class="player-stats">
                                 <div>
-                                    <span style="color: var(--text-tertiary);">K/D:</span>
-                                    <span class="stat-value">{{ player.kd }}</span>
+                                    <span style="color: #64748b;">K/D:</span>
+                                    <span class="player-kd">{{ player.kd }}</span>
                                 </div>
                                 <div>
-                                    <span style="color: var(--text-tertiary);">Kills:</span>
-                                    <span class="stat-value">{{ player.kills }}</span>
+                                    <span style="color: #64748b;">Kills:</span>
+                                    <span class="player-kills">{{ player.kills }}</span>
                                 </div>
                             </div>
                         </div>
                     </div>
                     {% else %}
-                    <div style="text-align: center; padding: 40px; color: var(--text-tertiary);">
-                        <i class="fas fa-users" style="font-size: 2rem; margin-bottom: 20px; opacity: 0.5;"></i>
+                    <div style="text-align: center; padding: 3rem; color: #64748b;">
+                        <span style="font-size: 3rem; margin-bottom: 1rem; opacity: 0.5;">👥</span>
                         <p>No players on leaderboard yet</p>
                     </div>
                     {% endfor %}
                 </div>
                 
-                <div style="margin-top: 30px; padding: 20px; background: var(--bg-tertiary); border-radius: 12px; border-left: 4px solid var(--accent-green);">
-                    <div style="display: flex; align-items: center; gap: 12px; margin-bottom: 10px;">
-                        <i class="fas fa-chart-line" style="color: var(--accent-green);"></i>
-                        <h3 style="color: var(--accent-green); margin: 0; font-size: 1.2rem;">Your Position</h3>
+                <div class="your-rank">
+                    <div class="your-rank-header">
+                        <span>📊</span>
+                        <div class="your-rank-title">Your Position</div>
                     </div>
-                    <div style="display: flex; align-items: center; justify-content: space-between;">
+                    <div class="rank-stats">
                         <div>
-                            <div style="font-size: 2rem; font-weight: bold; color: var(--accent-blue);">{{ user_rank }}</div>
-                            <div style="color: var(--text-secondary); font-size: 0.9rem;">Global Rank</div>
+                            <div class="rank-number">{{ user_rank }}</div>
+                            <div class="rank-label">Global Rank</div>
                         </div>
                         <div style="text-align: right;">
-                            <div style="font-size: 1.8rem; font-weight: bold; color: var(--accent-green);">{{ "%.2f"|format(kd) }}</div>
-                            <div style="color: var(--text-secondary); font-size: 0.9rem;">Your K/D Ratio</div>
+                            <div class="rank-kd">{{ "%.2f"|format(kd) }}</div>
+                            <div class="rank-label">Your K/D Ratio</div>
                         </div>
                     </div>
                 </div>
@@ -1922,26 +1588,23 @@ def dashboard():
         </div>
         
         <div class="dashboard-footer">
-            <div style="margin-bottom: 20px; display: flex; align-items: center; justify-content: center; gap: 20px;">
-                <span>Dashboard v2.0</span>
-                <i class="fas fa-circle" style="font-size: 4px; color: var(--text-tertiary);"></i>
+            <div style="margin-bottom: 1.5rem; display: flex; align-items: center; justify-content: center; gap: 1.5rem; flex-wrap: wrap;">
+                <span>Goblin Cave Dashboard v1.0</span>
+                <span style="color: #64748b;">•</span>
                 <span>Session Active</span>
-                <i class="fas fa-circle" style="font-size: 4px; color: var(--text-tertiary);"></i>
+                <span style="color: #64748b;">•</span>
                 <span>Last Update: {{ datetime.now().strftime('%H:%M:%S') }}</span>
             </div>
             
             <div class="footer-links">
                 <a href="/" class="footer-link">
-                    <i class="fas fa-home"></i> Home
+                    <span>🏠</span> Home
                 </a>
                 <a href="#" class="footer-link" onclick="showDiscordInfo()">
-                    <i class="fab fa-discord"></i> Discord
+                    <span>💬</span> Discord
                 </a>
                 <a href="/health" class="footer-link" target="_blank">
-                    <i class="fas fa-server"></i> System Status
-                </a>
-                <a href="#" class="footer-link" onclick="showSupport()">
-                    <i class="fas fa-question-circle"></i> Support
+                    <span>⚡</span> System Status
                 </a>
             </div>
         </div>
@@ -1958,26 +1621,17 @@ def dashboard():
             }
             
             function downloadTool() {
-                const githubReleaseUrl = 'https://github.com/yourusername/sot-tdm-tool/releases/latest/download/sot_tdm_tool.exe';
-                
-                const link = document.createElement('a');
-                link.href = githubReleaseUrl;
-                link.download = 'sot_tdm_tool.exe';
-                link.style.display = 'none';
-                document.body.appendChild(link);
-                link.click();
-                document.body.removeChild(link);
-                
-                showNotification('Download started', 'success');
+                showNotification('Download feature coming soon', 'info');
             }
             
             async function loadLeaderboard() {
                 const container = document.getElementById('leaderboardContainer');
                 const btn = event?.target;
-                const originalHtml = btn?.innerHTML || 'Refresh';
+                const originalText = btn?.querySelector('span:last-child')?.textContent || '';
                 
                 if (btn) {
-                    btn.innerHTML = '<i class="fas fa-spinner fa-spin"></i>';
+                    const icon = btn.querySelector('span:first-child');
+                    icon.textContent = '⏳';
                     btn.disabled = true;
                 }
                 
@@ -1999,17 +1653,17 @@ def dashboard():
                                     <div class="player-info">
                                         <div class="player-name">
                                             ${player.name}
-                                            ${isCurrentUser ? '<span style="font-size: 0.8rem; color: var(--accent-blue);"><i class="fas fa-user"></i> You</span>' : ''}
-                                            ${player.prestige > 0 ? `<span style="font-size: 0.8rem; color: var(--accent-yellow);">P${player.prestige}</span>` : ''}
+                                            ${isCurrentUser ? '<span style="font-size: 0.8rem; color: #8b5cf6;"><span>👤</span> You</span>' : ''}
+                                            ${player.prestige > 0 ? `<span style="font-size: 0.8rem; color: #f59e0b;">P${player.prestige}</span>` : ''}
                                         </div>
                                         <div class="player-stats">
                                             <div>
-                                                <span style="color: var(--text-tertiary);">K/D:</span>
-                                                <span class="stat-value">${player.kd}</span>
+                                                <span style="color: #64748b;">K/D:</span>
+                                                <span class="player-kd">${player.kd}</span>
                                             </div>
                                             <div>
-                                                <span style="color: var(--text-tertiary);">Kills:</span>
-                                                <span class="stat-value">${player.kills}</span>
+                                                <span style="color: #64748b;">Kills:</span>
+                                                <span class="player-kills">${player.kills}</span>
                                             </div>
                                         </div>
                                     </div>
@@ -2020,17 +1674,18 @@ def dashboard():
                         container.innerHTML = html;
                     } else {
                         container.innerHTML = `
-                            <div style="text-align: center; padding: 40px; color: var(--text-tertiary);">
-                                <i class="fas fa-users" style="font-size: 2rem; margin-bottom: 20px; opacity: 0.5;"></i>
+                            <div style="text-align: center; padding: 3rem; color: #64748b;">
+                                <span style="font-size: 3rem; margin-bottom: 1rem; opacity: 0.5;">👥</span>
                                 <p>No players on leaderboard yet</p>
                             </div>
                         `;
                     }
                     
                     if (btn) {
-                        btn.innerHTML = '<i class="fas fa-check"></i>';
+                        const icon = btn.querySelector('span:first-child');
+                        icon.textContent = '✅';
                         setTimeout(() => {
-                            btn.innerHTML = originalHtml;
+                            icon.textContent = '🔄';
                             btn.disabled = false;
                         }, 500);
                     }
@@ -2038,16 +1693,17 @@ def dashboard():
                 } catch (error) {
                     console.error('Error loading leaderboard:', error);
                     container.innerHTML = `
-                        <div style="text-align: center; padding: 40px; color: var(--text-tertiary);">
-                            <i class="fas fa-exclamation-triangle" style="font-size: 2rem; margin-bottom: 20px; color: var(--danger);"></i>
+                        <div style="text-align: center; padding: 3rem; color: #64748b;">
+                            <span style="font-size: 3rem; margin-bottom: 1rem; color: #ef4444;">⚠️</span>
                             <p>Failed to load leaderboard</p>
                         </div>
                     `;
                     
                     if (btn) {
-                        btn.innerHTML = '<i class="fas fa-exclamation-triangle"></i>';
+                        const icon = btn.querySelector('span:first-child');
+                        icon.textContent = '⚠️';
                         setTimeout(() => {
-                            btn.innerHTML = 'Refresh';
+                            icon.textContent = '🔄';
                             btn.disabled = false;
                         }, 1000);
                     }
@@ -2058,16 +1714,19 @@ def dashboard():
                 alert('Join our Discord server for support and updates.');
             }
             
-            function showSupport() {
-                alert('For support, please join our Discord server or create a ticket.');
-            }
-            
             function showNotification(message, type = 'info') {
                 const colors = {
-                    info: 'var(--accent-blue)',
-                    success: 'var(--accent-green)',
-                    warning: 'var(--accent-yellow)',
-                    error: 'var(--danger)'
+                    info: '#8b5cf6',
+                    success: '#22c55e',
+                    warning: '#f59e0b',
+                    error: '#ef4444'
+                };
+                
+                const icons = {
+                    info: 'ℹ️',
+                    success: '✅',
+                    warning: '⚠️',
+                    error: '❌'
                 };
                 
                 const notification = document.createElement('div');
@@ -2075,27 +1734,28 @@ def dashboard():
                     position: fixed;
                     top: 20px;
                     right: 20px;
-                    background: var(--bg-secondary);
+                    background: rgba(30, 41, 59, 0.95);
+                    backdrop-filter: blur(10px);
                     border-left: 4px solid ${colors[type]};
-                    color: var(--text-primary);
-                    padding: 16px;
-                    border-radius: 8px;
-                    box-shadow: 0 8px 24px rgba(0, 0, 0, 0.2);
+                    color: #f0f0f0;
+                    padding: 1.2rem;
+                    border-radius: 12px;
+                    box-shadow: 0 10px 30px rgba(0, 0, 0, 0.3);
                     z-index: 10000;
                     transform: translateX(400px);
                     transition: transform 0.3s ease-out;
                     max-width: 300px;
                     display: flex;
                     align-items: center;
-                    gap: 12px;
-                    border: 1px solid var(--border);
+                    gap: 1rem;
+                    border: 1px solid rgba(139, 92, 246, 0.3);
                 `;
                 
                 notification.innerHTML = `
-                    <i class="fas fa-${type === 'success' ? 'check-circle' : 'info-circle'}" style="color: ${colors[type]};"></i>
+                    <span style="font-size: 1.5rem;">${icons[type]}</span>
                     <div>
-                        <div style="font-weight: 600; color: ${colors[type]};">${type.toUpperCase()}</div>
-                        <div style="margin-top: 4px; font-size: 0.95rem;">${message}</div>
+                        <div style="font-weight: 600; color: ${colors[type]}; margin-bottom: 0.3rem;">${type.toUpperCase()}</div>
+                        <div style="margin-top: 0.2rem; font-size: 0.95rem;">${message}</div>
                     </div>
                 `;
                 
@@ -2126,18 +1786,6 @@ def dashboard():
                 if (keyDisplay) {
                     keyDisplay.addEventListener('click', copyKey);
                 }
-                
-                // Add hover effects to stat cards
-                const statCards = document.querySelectorAll('.stat-card');
-                statCards.forEach(card => {
-                    card.addEventListener('mouseenter', function() {
-                        this.style.transform = 'translateY(-4px)';
-                    });
-                    
-                    card.addEventListener('mouseleave', function() {
-                        this.style.transform = 'translateY(0)';
-                    });
-                });
             });
         </script>
     </body>
@@ -2152,7 +1800,7 @@ def dashboard():
 
 @app.route('/admin')
 def admin_dashboard():
-    """Admin Dashboard Main Page"""
+    """Admin Dashboard"""
     if 'user_data' not in session or not session['user_data'].get('is_admin'):
         return redirect(url_for('dashboard'))
     
@@ -2185,32 +1833,8 @@ def admin_dashboard():
     <head>
         <meta charset="UTF-8">
         <meta name="viewport" content="width=device-width, initial-scale=1.0">
-        <title>Admin Dashboard - SOT TDM System</title>
-        <link rel="preconnect" href="https://fonts.googleapis.com">
-        <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-        <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=JetBrains+Mono:wght@300;400;500&display=swap" rel="stylesheet">
-        <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+        <title>Admin Dashboard - Goblin Cave</title>
         <style>
-            :root {
-                /* Professional Dark Theme */
-                --bg-primary: #0d1117;
-                --bg-secondary: #161b22;
-                --bg-tertiary: #21262d;
-                --border: #30363d;
-                --text-primary: #c9d1d9;
-                --text-secondary: #8b949e;
-                --text-tertiary: #6e7681;
-                --accent-blue: #58a6ff;
-                --accent-green: #56d364;
-                --accent-yellow: #e3b341;
-                --accent-orange: #f78166;
-                --accent-purple: #bc8cff;
-                --success: #238636;
-                --warning: #9e6a03;
-                --danger: #da3633;
-                --info: #1f6feb;
-            }
-            
             * {
                 margin: 0;
                 padding: 0;
@@ -2218,141 +1842,103 @@ def admin_dashboard():
             }
             
             body {
-                font-family: 'Inter', sans-serif;
-                background: var(--bg-primary);
-                color: var(--text-primary);
+                font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+                background: linear-gradient(135deg, #0a0a0a 0%, #1a1a2e 100%);
+                color: #f0f0f0;
                 min-height: 100vh;
-                line-height: 1.6;
             }
             
-            .grid-bg {
-                position: fixed;
-                width: 100%;
-                height: 100%;
-                top: 0;
-                left: 0;
-                background-image: 
-                    linear-gradient(rgba(88, 166, 255, 0.03) 1px, transparent 1px),
-                    linear-gradient(90deg, rgba(88, 166, 255, 0.03) 1px, transparent 1px);
-                background-size: 50px 50px;
-                z-index: -1;
-                pointer-events: none;
-            }
-            
-            /* HEADER */
+            /* Header */
             .admin-header {
-                background: var(--bg-secondary);
-                border-bottom: 1px solid var(--border);
-                padding: 20px 40px;
+                background: rgba(30, 41, 59, 0.9);
+                backdrop-filter: blur(10px);
+                border-bottom: 1px solid rgba(245, 158, 11, 0.3);
+                padding: 1.5rem 2rem;
                 display: flex;
                 justify-content: space-between;
                 align-items: center;
                 position: sticky;
                 top: 0;
                 z-index: 100;
-                box-shadow: 0 4px 20px rgba(0, 0, 0, 0.1);
+                box-shadow: 0 4px 20px rgba(0, 0, 0, 0.3);
             }
             
             .header-left {
                 display: flex;
                 align-items: center;
-                gap: 20px;
+                gap: 1rem;
             }
             
             .logo {
                 font-size: 1.8rem;
-                font-weight: 700;
-                color: var(--accent-blue);
-            }
-            
-            .logo span {
-                color: var(--accent-yellow);
-            }
-            
-            .header-right {
-                display: flex;
-                align-items: center;
-                gap: 20px;
+                font-weight: 800;
+                background: linear-gradient(90deg, #f59e0b, #d97706);
+                -webkit-background-clip: text;
+                -webkit-text-fill-color: transparent;
+                background-clip: text;
             }
             
             .admin-badge {
-                padding: 8px 16px;
-                background: rgba(227, 179, 65, 0.1);
-                border: 1px solid rgba(227, 179, 65, 0.3);
+                padding: 0.8rem 1.2rem;
+                background: rgba(245, 158, 11, 0.1);
+                border: 1px solid rgba(245, 158, 11, 0.3);
                 border-radius: 8px;
-                color: var(--accent-yellow);
+                color: #f59e0b;
                 font-weight: 600;
                 font-size: 0.95rem;
                 display: flex;
                 align-items: center;
-                gap: 8px;
+                gap: 0.8rem;
             }
             
             .nav-links {
                 display: flex;
-                gap: 10px;
+                gap: 0.8rem;
             }
             
             .nav-link {
-                padding: 10px 20px;
-                background: var(--bg-tertiary);
-                border: 1px solid var(--border);
-                color: var(--text-secondary);
+                padding: 0.8rem 1.2rem;
+                background: rgba(15, 23, 42, 0.8);
+                border: 1px solid rgba(139, 92, 246, 0.2);
+                color: #94a3b8;
                 text-decoration: none;
                 border-radius: 8px;
                 font-weight: 500;
-                transition: all 0.2s;
+                transition: all 0.3s ease;
                 display: flex;
                 align-items: center;
-                gap: 8px;
+                gap: 0.5rem;
                 font-size: 0.95rem;
             }
             
             .nav-link:hover {
-                background: var(--border);
-                color: var(--text-primary);
+                background: rgba(139, 92, 246, 0.1);
+                color: #f0f0f0;
+                border-color: #8b5cf6;
+                transform: translateY(-2px);
             }
             
             .nav-link.active {
-                background: var(--accent-blue);
-                color: white;
-                border-color: var(--accent-blue);
+                background: rgba(245, 158, 11, 0.1);
+                border-color: #f59e0b;
+                color: #f0f0f0;
             }
             
-            /* MAIN CONTENT */
+            /* Main Content */
             .admin-container {
                 max-width: 1400px;
-                margin: 0 auto;
-                padding: 30px;
+                margin: 2rem auto;
+                padding: 0 2rem;
                 position: relative;
                 z-index: 1;
             }
             
-            .admin-welcome {
-                margin-bottom: 40px;
-                padding: 30px;
-                background: var(--bg-secondary);
-                border-radius: 16px;
-                border: 1px solid var(--border);
-            }
-            
-            .admin-welcome h1 {
-                font-size: 2.2rem;
-                color: var(--text-primary);
-                margin-bottom: 10px;
-            }
-            
-            .admin-welcome p {
-                color: var(--text-secondary);
-                font-size: 1.1rem;
-            }
-            
-            /* STATS GRID */
+            /* Stats Grid */
             .stats-grid {
                 display: grid;
                 grid-template-columns: repeat(4, 1fr);
-                gap: 20px;
-                margin-bottom: 40px;
+                gap: 1.5rem;
+                margin-bottom: 2.5rem;
             }
             
             @media (max-width: 1024px) {
@@ -2368,46 +1954,48 @@ def admin_dashboard():
             }
             
             .stat-card {
-                background: var(--bg-secondary);
-                border-radius: 12px;
-                padding: 24px;
-                border: 1px solid var(--border);
-                transition: all 0.2s;
+                background: rgba(30, 41, 59, 0.8);
+                backdrop-filter: blur(10px);
+                border-radius: 15px;
+                padding: 2rem;
+                border: 1px solid rgba(139, 92, 246, 0.2);
+                transition: all 0.3s ease;
             }
             
             .stat-card:hover {
-                transform: translateY(-4px);
-                border-color: var(--accent-blue);
-                box-shadow: 0 8px 24px rgba(0, 0, 0, 0.2);
+                transform: translateY(-5px);
+                border-color: #8b5cf6;
+                box-shadow: 0 10px 30px rgba(139, 92, 246, 0.2);
             }
             
             .stat-icon {
-                font-size: 2rem;
-                margin-bottom: 16px;
-                color: var(--accent-blue);
+                font-size: 2.5rem;
+                margin-bottom: 1rem;
+                color: #8b5cf6;
             }
             
             .stat-value {
-                font-size: 2.5rem;
-                font-weight: 700;
-                margin: 12px 0;
-                color: var(--text-primary);
+                font-size: 3rem;
+                font-weight: 800;
+                margin: 1rem 0;
+                color: #f0f0f0;
+                text-shadow: 0 0 20px rgba(139, 92, 246, 0.3);
             }
             
             .stat-label {
-                color: var(--text-secondary);
-                font-size: 0.9rem;
+                color: #94a3b8;
+                font-size: 0.95rem;
                 text-transform: uppercase;
                 letter-spacing: 1px;
                 font-weight: 600;
             }
             
-            /* ADMIN SECTIONS */
+            /* Admin Sections */
             .admin-sections {
                 display: grid;
                 grid-template-columns: repeat(2, 1fr);
-                gap: 30px;
-                margin-bottom: 40px;
+                gap: 2rem;
+                margin-bottom: 2.5rem;
             }
             
             @media (max-width: 1024px) {
@@ -2417,72 +2005,84 @@ def admin_dashboard():
             }
             
             .admin-section {
-                background: var(--bg-secondary);
-                border-radius: 16px;
-                padding: 30px;
-                border: 1px solid var(--border);
+                background: rgba(30, 41, 59, 0.8);
+                backdrop-filter: blur(10px);
+                border-radius: 20px;
+                padding: 2rem;
+                border: 1px solid rgba(139, 92, 246, 0.3);
             }
             
             .section-header {
                 display: flex;
                 justify-content: space-between;
                 align-items: center;
-                margin-bottom: 24px;
-                padding-bottom: 20px;
-                border-bottom: 1px solid var(--border);
+                margin-bottom: 1.5rem;
+                padding-bottom: 1.5rem;
+                border-bottom: 1px solid rgba(139, 92, 246, 0.2);
             }
             
             .section-title {
-                font-size: 1.4rem;
-                color: var(--accent-blue);
+                font-size: 1.5rem;
+                color: #f0f0f0;
                 font-weight: 600;
+                display: flex;
+                align-items: center;
+                gap: 1rem;
             }
             
             .view-all {
-                padding: 8px 16px;
-                background: var(--bg-tertiary);
-                border: 1px solid var(--border);
-                color: var(--text-secondary);
+                padding: 0.6rem 1.2rem;
+                background: rgba(15, 23, 42, 0.8);
+                border: 1px solid rgba(139, 92, 246, 0.2);
+                color: #94a3b8;
                 border-radius: 8px;
                 font-weight: 500;
                 cursor: pointer;
-                transition: all 0.2s;
+                transition: all 0.3s ease;
                 font-size: 0.9rem;
                 text-decoration: none;
-                display: inline-block;
             }
             
             .view-all:hover {
-                background: var(--border);
-                color: var(--text-primary);
+                background: rgba(139, 92, 246, 0.1);
+                color: #f0f0f0;
+                border-color: #8b5cf6;
+                transform: translateY(-2px);
             }
             
+            /* Activity List */
             .activity-list {
                 display: flex;
                 flex-direction: column;
-                gap: 12px;
+                gap: 1rem;
             }
             
             .activity-item {
                 display: flex;
                 align-items: center;
-                gap: 16px;
-                padding: 16px;
-                background: var(--bg-tertiary);
+                gap: 1.2rem;
+                padding: 1.2rem;
+                background: rgba(15, 23, 42, 0.8);
                 border-radius: 12px;
-                border: 1px solid var(--border);
+                border: 1px solid rgba(139, 92, 246, 0.2);
+                transition: all 0.3s ease;
+            }
+            
+            .activity-item:hover {
+                transform: translateX(5px);
+                border-color: #8b5cf6;
             }
             
             .activity-icon {
-                width: 40px;
-                height: 40px;
-                background: var(--accent-blue);
+                width: 50px;
+                height: 50px;
+                background: linear-gradient(135deg, #8b5cf6, #22c55e);
                 border-radius: 50%;
                 display: flex;
                 align-items: center;
                 justify-content: center;
                 color: white;
-                font-size: 1.2rem;
+                font-size: 1.5rem;
             }
             
             .activity-content {
@@ -2491,115 +2091,102 @@ def admin_dashboard():
             
             .activity-title {
                 font-weight: 600;
-                color: var(--text-primary);
-                margin-bottom: 4px;
+                color: #f0f0f0;
+                margin-bottom: 0.4rem;
+                display: flex;
+                align-items: center;
+                gap: 0.8rem;
             }
             
             .activity-time {
-                color: var(--text-tertiary);
+                color: #94a3b8;
                 font-size: 0.85rem;
             }
             
-            /* QUICK ACTIONS */
-            .quick-actions {
-                margin-top: 40px;
-            }
-            
-            .actions-grid {
-                display: grid;
-                grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
-                gap: 20px;
-                margin-top: 20px;
-            }
-            
-            .action-card {
-                background: var(--bg-secondary);
-                border-radius: 12px;
-                padding: 24px;
-                border: 1px solid var(--border);
-                text-align: center;
-                cursor: pointer;
-                transition: all 0.2s;
-                text-decoration: none;
-                color: var(--text-primary);
-            }
-            
-            .action-card:hover {
-                transform: translateY(-4px);
-                border-color: var(--accent-blue);
-                box-shadow: 0 8px 24px rgba(0, 0, 0, 0.2);
-                background: var(--bg-tertiary);
-            }
-            
-            .action-icon {
-                font-size: 2.5rem;
-                margin-bottom: 16px;
-                color: var(--accent-blue);
-            }
-            
-            .action-title {
-                font-weight: 600;
-                margin-bottom: 8px;
-            }
-            
-            .action-desc {
-                color: var(--text-secondary);
-                font-size: 0.9rem;
-                line-height: 1.4;
-            }
-            
-            /* FOOTER */
-            .admin-footer {
-                margin-top: 60px;
-                padding: 30px;
-                text-align: center;
-                color: var(--text-tertiary);
-                font-size: 0.9rem;
-                border-top: 1px solid var(--border);
-            }
-            
-            /* UTILITIES */
-            .text-success { color: var(--accent-green); }
-            .text-warning { color: var(--accent-yellow); }
-            .text-danger { color: var(--danger); }
-            .text-info { color: var(--accent-blue); }
-            
+            /* Badges */
             .badge {
-                padding: 4px 8px;
-                border-radius: 4px;
+                padding: 0.3rem 0.8rem;
+                border-radius: 6px;
                 font-size: 0.8rem;
                 font-weight: 600;
             }
             
-            .badge-success { background: rgba(86, 211, 100, 0.1); color: var(--accent-green); }
-            .badge-warning { background: rgba(227, 179, 65, 0.1); color: var(--accent-yellow); }
-            .badge-danger { background: rgba(218, 54, 51, 0.1); color: var(--danger); }
-            .badge-info { background: rgba(88, 166, 255, 0.1); color: var(--accent-blue); }
+            .badge-success { background: rgba(34, 197, 94, 0.1); color: #22c55e; }
+            .badge-warning { background: rgba(245, 158, 11, 0.1); color: #f59e0b; }
+            .badge-info { background: rgba(59, 130, 246, 0.1); color: #3b82f6; }
+            .badge-purple { background: rgba(139, 92, 246, 0.1); color: #8b5cf6; }
             
-            /* ANIMATIONS */
-            @keyframes fadeIn {
-                from { opacity: 0; }
-                to { opacity: 1; }
+            /* Quick Actions */
+            .quick-actions {
+                margin-top: 2.5rem;
             }
             
-            /* RESPONSIVE */
+            .actions-grid {
+                display: grid;
+                grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
+                gap: 1.5rem;
+                margin-top: 1.5rem;
+            }
+            
+            .action-card {
+                background: rgba(30, 41, 59, 0.8);
+                backdrop-filter: blur(10px);
+                border-radius: 15px;
+                padding: 2rem;
+                border: 1px solid rgba(139, 92, 246, 0.2);
+                text-align: center;
+                cursor: pointer;
+                transition: all 0.3s ease;
+                text-decoration: none;
+                color: #f0f0f0;
+                display: block;
+            }
+            
+            .action-card:hover {
+                transform: translateY(-5px);
+                border-color: #8b5cf6;
+                box-shadow: 0 10px 30px rgba(139, 92, 246, 0.2);
+                background: rgba(30, 41, 59, 0.9);
+            }
+            
+            .action-icon {
+                font-size: 3rem;
+                margin-bottom: 1rem;
+                color: #8b5cf6;
+            }
+            
+            .action-title {
+                font-weight: 600;
+                margin-bottom: 0.8rem;
+                font-size: 1.2rem;
+            }
+            
+            .action-desc {
+                color: #94a3b8;
+                font-size: 0.9rem;
+                line-height: 1.5;
+            }
+            
+            /* Footer */
+            .admin-footer {
+                margin-top: 3rem;
+                padding: 2rem;
+                text-align: center;
+                color: #64748b;
+                font-size: 0.9rem;
+                border-top: 1px solid rgba(139, 92, 246, 0.2);
+            }
+            
+            /* Responsive */
             @media (max-width: 768px) {
                 .admin-header {
                     flex-direction: column;
-                    gap: 20px;
-                    padding: 20px;
+                    gap: 1.5rem;
+                    padding: 1.5rem;
                 }
                 
                 .admin-container {
-                    padding: 20px;
-                }
-                
-                .admin-welcome {
-                    padding: 20px;
-                }
-                
-                .admin-welcome h1 {
-                    font-size: 1.8rem;
+                    padding: 1rem;
                 }
                 
                 .nav-links {
@@ -2609,29 +2196,14 @@ def admin_dashboard():
                 
                 .section-header {
                     flex-direction: column;
-                    gap: 20px;
+                    gap: 1.5rem;
                     text-align: center;
                 }
                 
                 .activity-item {
                     flex-direction: column;
                     text-align: center;
-                    gap: 12px;
-                }
-            }
-            
-            @media (max-width: 480px) {
-                .logo {
-                    font-size: 1.5rem;
-                }
-                
-                .admin-badge {
-                    padding: 6px 12px;
-                    font-size: 0.85rem;
-                }
-                
-                .stat-value {
-                    font-size: 2rem;
+                    gap: 1rem;
                 }
                 
                 .actions-grid {
@@ -2641,76 +2213,44 @@ def admin_dashboard():
         </style>
     </head>
     <body>
-        <div class="grid-bg"></div>
-        
         <!-- Header -->
         <div class="admin-header">
             <div class="header-left">
-                <div class="logo">ADMIN <span>PANEL</span></div>
-                <div style="color: var(--text-tertiary); font-size: 0.9rem;">
-                    SOT TDM System Management
+                <div class="logo">👑 Goblin Admin</div>
+                <div style="color: #94a3b8; font-size: 0.9rem;">
+                    System Management
                 </div>
             </div>
             
-            <div class="header-right">
-                <div class="admin-badge">
-                    <i class="fas fa-shield-alt"></i> Administrator
-                </div>
-                
-                <div class="nav-links">
-                    <a href="/admin" class="nav-link active">
-                        <i class="fas fa-tachometer-alt"></i> Dashboard
-                    </a>
-                    <a href="/admin/players" class="nav-link">
-                        <i class="fas fa-users"></i> Players
-                    </a>
-                    <a href="/dashboard" class="nav-link">
-                        <i class="fas fa-user"></i> User View
-                    </a>
-                    <a href="/logout" class="nav-link">
-                        <i class="fas fa-sign-out-alt"></i> Logout
-                    </a>
-                </div>
+            <div class="admin-badge">
+                <span>👑</span> Administrator
             </div>
         </div>
         
         <!-- Main Content -->
         <div class="admin-container">
-            <div class="admin-welcome">
-                <h1>Welcome, Administrator</h1>
-                <p>System overview and management controls for SOT TDM System</p>
-            </div>
-            
             <!-- Stats Overview -->
             <div class="stats-grid">
                 <div class="stat-card">
-                    <div class="stat-icon">
-                        <i class="fas fa-users"></i>
-                    </div>
+                    <div class="stat-icon">👥</div>
                     <div class="stat-value">{{ total_players }}</div>
                     <div class="stat-label">Total Players</div>
                 </div>
                 
                 <div class="stat-card">
-                    <div class="stat-icon">
-                        <i class="fas fa-crosshairs"></i>
-                    </div>
+                    <div class="stat-icon">🎯</div>
                     <div class="stat-value">{{ "{:,}".format(total_kills) }}</div>
                     <div class="stat-label">Total Kills</div>
                 </div>
                 
                 <div class="stat-card">
-                    <div class="stat-icon">
-                        <i class="fas fa-gamepad"></i>
-                    </div>
+                    <div class="stat-icon">🎮</div>
                     <div class="stat-value">{{ total_games }}</div>
                     <div class="stat-label">Games Played</div>
                 </div>
                 
                 <div class="stat-card">
-                    <div class="stat-icon">
-                        <i class="fas fa-shield-alt"></i>
-                    </div>
+                    <div class="stat-icon">👑</div>
                     <div class="stat-value">{{ admins }}</div>
                     <div class="stat-label">Administrators</div>
                 </div>
@@ -2721,19 +2261,15 @@ def admin_dashboard():
                 <div class="admin-section">
                     <div class="section-header">
                         <div class="section-title">
-                            <i class="fas fa-ticket-alt"></i> Recent Tickets
+                            <span>🎫</span> Recent Tickets
                         </div>
-                        <a href="/admin/tickets" class="view-all">
-                            View All
-                        </a>
+                        <a href="#" class="view-all">View All</a>
                     </div>
                     
                     <div class="activity-list">
                         {% for ticket in recent_activity %}
                         <div class="activity-item">
-                            <div class="activity-icon">
-                                <i class="fas fa-question-circle"></i>
-                            </div>
+                            <div class="activity-icon">❓</div>
                             <div class="activity-content">
                                 <div class="activity-title">
                                     {{ ticket.discord_name }}
@@ -2745,8 +2281,8 @@ def admin_dashboard():
                             </div>
                         </div>
                         {% else %}
-                        <div style="text-align: center; padding: 40px; color: var(--text-tertiary);">
-                            <i class="fas fa-check-circle" style="font-size: 2rem; margin-bottom: 16px; opacity: 0.5;"></i>
+                        <div style="text-align: center; padding: 3rem; color: #64748b;">
+                            <span style="font-size: 3rem; margin-bottom: 1rem; opacity: 0.5;">✅</span>
                             <p>No open tickets</p>
                         </div>
                         {% endfor %}
@@ -2756,19 +2292,15 @@ def admin_dashboard():
                 <div class="admin-section">
                     <div class="section-header">
                         <div class="section-title">
-                            <i class="fas fa-gamepad"></i> Recent Matches
+                            <span>🏆</span> Recent Matches
                         </div>
-                        <a href="/admin/matches" class="view-all">
-                            View All
-                        </a>
+                        <a href="#" class="view-all">View All</a>
                     </div>
                     
                     <div class="activity-list">
                         {% for match in recent_matches %}
                         <div class="activity-item">
-                            <div class="activity-icon">
-                                <i class="fas fa-trophy"></i>
-                            </div>
+                            <div class="activity-icon">⚔️</div>
                             <div class="activity-content">
                                 <div class="activity-title">
                                     Match {{ match.match_id[:8] }}
@@ -2782,8 +2314,8 @@ def admin_dashboard():
                             </div>
                         </div>
                         {% else %}
-                        <div style="text-align: center; padding: 40px; color: var(--text-tertiary);">
-                            <i class="fas fa-gamepad" style="font-size: 2rem; margin-bottom: 16px; opacity: 0.5;"></i>
+                        <div style="text-align: center; padding: 3rem; color: #64748b;">
+                            <span style="font-size: 3rem; margin-bottom: 1rem; opacity: 0.5;">⚔️</span>
                             <p>No recent matches</p>
                         </div>
                         {% endfor %}
@@ -2793,15 +2325,13 @@ def admin_dashboard():
             
             <!-- Quick Actions -->
             <div class="quick-actions">
-                <h2 style="color: var(--text-primary); margin-bottom: 20px; font-size: 1.6rem;">
-                    <i class="fas fa-bolt"></i> Quick Actions
+                <h2 style="color: #f0f0f0; margin-bottom: 1.5rem; font-size: 1.8rem; display: flex; align-items: center; gap: 1rem;">
+                    <span>⚡</span> Quick Actions
                 </h2>
                 
                 <div class="actions-grid">
                     <a href="/admin/players" class="action-card">
-                        <div class="action-icon">
-                            <i class="fas fa-user-cog"></i>
-                        </div>
+                        <div class="action-icon">👥</div>
                         <div class="action-title">Manage Players</div>
                         <div class="action-desc">
                             View, edit, and manage all registered players
@@ -2809,29 +2339,23 @@ def admin_dashboard():
                     </a>
                     
                     <a href="/admin/players?action=add" class="action-card">
-                        <div class="action-icon">
-                            <i class="fas fa-user-plus"></i>
-                        </div>
+                        <div class="action-icon">➕</div>
                         <div class="action-title">Add Player</div>
                         <div class="action-desc">
                             Manually register a new player to the system
                         </div>
                     </a>
                     
-                    <a href="/admin/tickets" class="action-card">
-                        <div class="action-icon">
-                            <i class="fas fa-ticket-alt"></i>
-                        </div>
+                    <a href="#" class="action-card" onclick="showNotification('Feature coming soon', 'info')">
+                        <div class="action-icon">🎫</div>
                         <div class="action-title">Manage Tickets</div>
                         <div class="action-desc">
                             Review and resolve support tickets
                         </div>
                     </a>
                     
-                    <a href="/admin/settings" class="action-card">
-                        <div class="action-icon">
-                            <i class="fas fa-cog"></i>
-                        </div>
+                    <a href="#" class="action-card" onclick="showNotification('Feature coming soon', 'info')">
+                        <div class="action-icon">⚙️</div>
                         <div class="action-title">System Settings</div>
                         <div class="action-desc">
                             Configure system preferences and options
@@ -2842,26 +2366,33 @@ def admin_dashboard():
         </div>
         
         <div class="admin-footer">
-            <div style="margin-bottom: 20px; display: flex; align-items: center; justify-content: center; gap: 20px;">
-                <span>Admin Panel v2.0</span>
-                <i class="fas fa-circle" style="font-size: 4px; color: var(--text-tertiary);"></i>
+            <div style="margin-bottom: 1.5rem; display: flex; align-items: center; justify-content: center; gap: 1.5rem; flex-wrap: wrap;">
+                <span>👑 Admin Panel v1.0</span>
+                <span style="color: #64748b;">•</span>
                 <span>System Time: {{ datetime.now().strftime('%H:%M:%S') }}</span>
-                <i class="fas fa-circle" style="font-size: 4px; color: var(--text-tertiary);"></i>
-                <span>Status: <span class="text-success">Operational</span></span>
+                <span style="color: #64748b;">•</span>
+                <span>Status: <span style="color: #22c55e;">Operational</span></span>
             </div>
             
-            <div style="color: var(--text-tertiary); font-size: 0.85rem; opacity: 0.8;">
-                &copy; {{ datetime.now().year }} SOT TDM System Administration
+            <div style="color: #64748b; font-size: 0.85rem; opacity: 0.8;">
+                &copy; {{ datetime.now().year }} Goblin Cave Administration
             </div>
         </div>
         
         <script>
             function showNotification(message, type = 'info') {
                 const colors = {
-                    info: 'var(--accent-blue)',
-                    success: 'var(--accent-green)',
-                    warning: 'var(--accent-yellow)',
-                    error: 'var(--danger)'
+                    info: '#8b5cf6',
+                    success: '#22c55e',
+                    warning: '#f59e0b',
+                    error: '#ef4444'
+                };
+                
+                const icons = {
+                    info: 'ℹ️',
+                    success: '✅',
+                    warning: '⚠️',
+                    error: '❌'
                 };
                 
                 const notification = document.createElement('div');
@@ -2869,27 +2400,28 @@ def admin_dashboard():
                     position: fixed;
                     top: 20px;
                     right: 20px;
-                    background: var(--bg-secondary);
+                    background: rgba(30, 41, 59, 0.95);
+                    backdrop-filter: blur(10px);
                     border-left: 4px solid ${colors[type]};
-                    color: var(--text-primary);
-                    padding: 16px;
-                    border-radius: 8px;
-                    box-shadow: 0 8px 24px rgba(0, 0, 0, 0.2);
+                    color: #f0f0f0;
+                    padding: 1.2rem;
+                    border-radius: 12px;
+                    box-shadow: 0 10px 30px rgba(0, 0, 0, 0.3);
                     z-index: 10000;
                     transform: translateX(400px);
                     transition: transform 0.3s ease-out;
                     max-width: 300px;
                     display: flex;
                     align-items: center;
-                    gap: 12px;
-                    border: 1px solid var(--border);
+                    gap: 1rem;
+                    border: 1px solid rgba(139, 92, 246, 0.3);
                 `;
                 
                 notification.innerHTML = `
-                    <i class="fas fa-${type === 'success' ? 'check-circle' : 'info-circle'}" style="color: ${colors[type]};"></i>
+                    <span style="font-size: 1.5rem;">${icons[type]}</span>
                     <div>
-                        <div style="font-weight: 600; color: ${colors[type]};">${type.toUpperCase()}</div>
-                        <div style="margin-top: 4px; font-size: 0.95rem;">${message}</div>
+                        <div style="font-weight: 600; color: ${colors[type]}; margin-bottom: 0.3rem;">${type.toUpperCase()}</div>
+                        <div style="margin-top: 0.2rem; font-size: 0.95rem;">${message}</div>
                     </div>
                 `;
                 
@@ -2916,7 +2448,7 @@ def admin_dashboard():
                 const actionCards = document.querySelectorAll('.action-card');
                 actionCards.forEach(card => {
                     card.addEventListener('mouseenter', function() {
-                        this.style.transform = 'translateY(-4px)';
+                        this.style.transform = 'translateY(-5px)';
                     });
                     
                     card.addEventListener('mouseleave', function() {
@@ -2929,768 +2461,6 @@ def admin_dashboard():
     </html>
     ''', total_players=total_players, total_kills=total_kills, total_games=total_games, 
         admins=admins, recent_activity=recent_activity, recent_matches=recent_matches, datetime=datetime)
-
-@app.route('/admin/players')
-def admin_players():
-    """Admin Players Management"""
-    if 'user_data' not in session or not session['user_data'].get('is_admin'):
-        return redirect(url_for('dashboard'))
-    
-    players = get_all_players()
-    action = request.args.get('action', '')
-    
-    return render_template_string('''
-    <!DOCTYPE html>
-    <html lang="en">
-    <head>
-        <meta charset="UTF-8">
-        <meta name="viewport" content="width=device-width, initial-scale=1.0">
-        <title>Player Management - Admin Panel</title>
-        <link rel="preconnect" href="https://fonts.googleapis.com">
-        <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-        <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=JetBrains+Mono:wght@300;400;500&display=swap" rel="stylesheet">
-        <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
-        <style>
-            :root {
-                --bg-primary: #0d1117;
-                --bg-secondary: #161b22;
-                --bg-tertiary: #21262d;
-                --border: #30363d;
-                --text-primary: #c9d1d9;
-                --text-secondary: #8b949e;
-                --text-tertiary: #6e7681;
-                --accent-blue: #58a6ff;
-                --accent-green: #56d364;
-                --accent-yellow: #e3b341;
-                --accent-orange: #f78166;
-                --accent-purple: #bc8cff;
-                --success: #238636;
-                --warning: #9e6a03;
-                --danger: #da3633;
-                --info: #1f6feb;
-            }
-            
-            * {
-                margin: 0;
-                padding: 0;
-                box-sizing: border-box;
-            }
-            
-            body {
-                font-family: 'Inter', sans-serif;
-                background: var(--bg-primary);
-                color: var(--text-primary);
-                min-height: 100vh;
-                line-height: 1.6;
-            }
-            
-            .grid-bg {
-                position: fixed;
-                width: 100%;
-                height: 100%;
-                top: 0;
-                left: 0;
-                background-image: 
-                    linear-gradient(rgba(88, 166, 255, 0.03) 1px, transparent 1px),
-                    linear-gradient(90deg, rgba(88, 166, 255, 0.03) 1px, transparent 1px);
-                background-size: 50px 50px;
-                z-index: -1;
-                pointer-events: none;
-            }
-            
-            /* HEADER */
-            .admin-header {
-                background: var(--bg-secondary);
-                border-bottom: 1px solid var(--border);
-                padding: 20px 40px;
-                display: flex;
-                justify-content: space-between;
-                align-items: center;
-                position: sticky;
-                top: 0;
-                z-index: 100;
-                box-shadow: 0 4px 20px rgba(0, 0, 0, 0.1);
-            }
-            
-            .header-left {
-                display: flex;
-                align-items: center;
-                gap: 20px;
-            }
-            
-            .logo {
-                font-size: 1.8rem;
-                font-weight: 700;
-                color: var(--accent-blue);
-            }
-            
-            .logo span {
-                color: var(--accent-yellow);
-            }
-            
-            .header-right {
-                display: flex;
-                align-items: center;
-                gap: 20px;
-            }
-            
-            .admin-badge {
-                padding: 8px 16px;
-                background: rgba(227, 179, 65, 0.1);
-                border: 1px solid rgba(227, 179, 65, 0.3);
-                border-radius: 8px;
-                color: var(--accent-yellow);
-                font-weight: 600;
-                font-size: 0.95rem;
-                display: flex;
-                align-items: center;
-                gap: 8px;
-            }
-            
-            .nav-links {
-                display: flex;
-                gap: 10px;
-            }
-            
-            .nav-link {
-                padding: 10px 20px;
-                background: var(--bg-tertiary);
-                border: 1px solid var(--border);
-                color: var(--text-secondary);
-                text-decoration: none;
-                border-radius: 8px;
-                font-weight: 500;
-                transition: all 0.2s;
-                display: flex;
-                align-items: center;
-                gap: 8px;
-                font-size: 0.95rem;
-            }
-            
-            .nav-link:hover {
-                background: var(--border);
-                color: var(--text-primary);
-            }
-            
-            .nav-link.active {
-                background: var(--accent-blue);
-                color: white;
-                border-color: var(--accent-blue);
-            }
-            
-            /* MAIN CONTENT */
-            .admin-container {
-                max-width: 1400px;
-                margin: 0 auto;
-                padding: 30px;
-                position: relative;
-                z-index: 1;
-            }
-            
-            .page-header {
-                margin-bottom: 30px;
-                display: flex;
-                justify-content: space-between;
-                align-items: center;
-            }
-            
-            .page-title {
-                font-size: 2rem;
-                color: var(--text-primary);
-            }
-            
-            .page-actions {
-                display: flex;
-                gap: 12px;
-            }
-            
-            .btn {
-                padding: 10px 20px;
-                border: 1px solid var(--border);
-                border-radius: 8px;
-                font-weight: 500;
-                cursor: pointer;
-                transition: all 0.2s;
-                display: flex;
-                align-items: center;
-                gap: 8px;
-                font-size: 0.95rem;
-                text-decoration: none;
-                color: var(--text-primary);
-                background: var(--bg-tertiary);
-            }
-            
-            .btn:hover {
-                background: var(--border);
-            }
-            
-            .btn-primary {
-                background: var(--accent-blue);
-                border-color: var(--accent-blue);
-                color: white;
-            }
-            
-            .btn-primary:hover {
-                background: #388bfd;
-            }
-            
-            .btn-success {
-                background: var(--accent-green);
-                border-color: var(--accent-green);
-                color: white;
-            }
-            
-            .btn-success:hover {
-                background: #3fb950;
-            }
-            
-            /* PLAYERS TABLE */
-            .players-table-container {
-                background: var(--bg-secondary);
-                border-radius: 16px;
-                border: 1px solid var(--border);
-                overflow: hidden;
-                margin-bottom: 30px;
-            }
-            
-            .table-header {
-                display: grid;
-                grid-template-columns: 50px 1fr 1fr 1fr 100px 100px 100px 100px 120px;
-                padding: 20px;
-                background: var(--bg-tertiary);
-                border-bottom: 1px solid var(--border);
-                font-weight: 600;
-                color: var(--text-secondary);
-                font-size: 0.9rem;
-                text-transform: uppercase;
-                letter-spacing: 0.5px;
-            }
-            
-            .table-row {
-                display: grid;
-                grid-template-columns: 50px 1fr 1fr 1fr 100px 100px 100px 100px 120px;
-                padding: 16px 20px;
-                border-bottom: 1px solid var(--border);
-                align-items: center;
-                transition: all 0.2s;
-            }
-            
-            .table-row:hover {
-                background: var(--bg-tertiary);
-            }
-            
-            .table-row:last-child {
-                border-bottom: none;
-            }
-            
-            .player-avatar {
-                width: 36px;
-                height: 36px;
-                background: var(--accent-blue);
-                border-radius: 50%;
-                display: flex;
-                align-items: center;
-                justify-content: center;
-                color: white;
-                font-weight: bold;
-                font-size: 1rem;
-            }
-            
-            .player-name {
-                font-weight: 600;
-                color: var(--text-primary);
-            }
-            
-            .player-discord {
-                color: var(--text-secondary);
-                font-size: 0.9rem;
-            }
-            
-            .player-key {
-                font-family: 'JetBrains Mono', monospace;
-                font-size: 0.85rem;
-                color: var(--text-tertiary);
-                cursor: pointer;
-                transition: all 0.2s;
-            }
-            
-            .player-key:hover {
-                color: var(--accent-blue);
-            }
-            
-            .player-stats {
-                text-align: center;
-                font-weight: 600;
-            }
-            
-            .player-kd {
-                color: var(--accent-green);
-            }
-            
-            .player-admin {
-                text-align: center;
-            }
-            
-            .badge {
-                padding: 4px 8px;
-                border-radius: 4px;
-                font-size: 0.8rem;
-                font-weight: 600;
-            }
-            
-            .badge-success { background: rgba(86, 211, 100, 0.1); color: var(--accent-green); }
-            .badge-warning { background: rgba(227, 179, 65, 0.1); color: var(--accent-yellow); }
-            .badge-danger { background: rgba(218, 54, 51, 0.1); color: var(--danger); }
-            .badge-info { background: rgba(88, 166, 255, 0.1); color: var(--accent-blue); }
-            
-            .player-actions {
-                display: flex;
-                gap: 8px;
-                justify-content: center;
-            }
-            
-            .action-btn {
-                width: 32px;
-                height: 32px;
-                background: var(--bg-tertiary);
-                border: 1px solid var(--border);
-                border-radius: 6px;
-                color: var(--text-secondary);
-                cursor: pointer;
-                transition: all 0.2s;
-                display: flex;
-                align-items: center;
-                justify-content: center;
-            }
-            
-            .action-btn:hover {
-                background: var(--border);
-                color: var(--text-primary);
-            }
-            
-            .action-btn.edit:hover {
-                color: var(--accent-blue);
-                border-color: var(--accent-blue);
-            }
-            
-            .action-btn.delete:hover {
-                color: var(--danger);
-                border-color: var(--danger);
-            }
-            
-            /* PAGINATION */
-            .pagination {
-                display: flex;
-                justify-content: center;
-                gap: 8px;
-                margin-top: 30px;
-            }
-            
-            .page-btn {
-                width: 40px;
-                height: 40px;
-                background: var(--bg-tertiary);
-                border: 1px solid var(--border);
-                border-radius: 8px;
-                color: var(--text-secondary);
-                cursor: pointer;
-                transition: all 0.2s;
-                display: flex;
-                align-items: center;
-                justify-content: center;
-            }
-            
-            .page-btn:hover {
-                background: var(--border);
-                color: var(--text-primary);
-            }
-            
-            .page-btn.active {
-                background: var(--accent-blue);
-                border-color: var(--accent-blue);
-                color: white;
-            }
-            
-            /* RESPONSIVE */
-            @media (max-width: 1200px) {
-                .table-header,
-                .table-row {
-                    grid-template-columns: 50px 1fr 1fr 100px 100px 100px 120px;
-                }
-                
-                .table-header > :nth-child(4),
-                .table-row > :nth-child(4) {
-                    display: none;
-                }
-            }
-            
-            @media (max-width: 992px) {
-                .table-header,
-                .table-row {
-                    grid-template-columns: 50px 1fr 100px 100px 120px;
-                }
-                
-                .table-header > :nth-child(3),
-                .table-row > :nth-child(3),
-                .table-header > :nth-child(6),
-                .table-row > :nth-child(6),
-                .table-header > :nth-child(7),
-                .table-row > :nth-child(7) {
-                    display: none;
-                }
-            }
-            
-            @media (max-width: 768px) {
-                .admin-header {
-                    flex-direction: column;
-                    gap: 20px;
-                    padding: 20px;
-                }
-                
-                .admin-container {
-                    padding: 20px;
-                }
-                
-                .page-header {
-                    flex-direction: column;
-                    gap: 20px;
-                    text-align: center;
-                }
-                
-                .nav-links {
-                    flex-wrap: wrap;
-                    justify-content: center;
-                }
-                
-                .table-header,
-                .table-row {
-                    grid-template-columns: 40px 1fr 80px 100px;
-                    padding: 12px 16px;
-                    font-size: 0.85rem;
-                }
-                
-                .table-header > :nth-child(5),
-                .table-row > :nth-child(5),
-                .table-header > :nth-child(8),
-                .table-row > :nth-child(8) {
-                    display: none;
-                }
-                
-                .player-avatar {
-                    width: 30px;
-                    height: 30px;
-                    font-size: 0.9rem;
-                }
-            }
-            
-            @media (max-width: 480px) {
-                .logo {
-                    font-size: 1.5rem;
-                }
-                
-                .admin-badge {
-                    padding: 6px 12px;
-                    font-size: 0.85rem;
-                }
-                
-                .page-title {
-                    font-size: 1.5rem;
-                }
-                
-                .page-actions {
-                    flex-direction: column;
-                    width: 100%;
-                }
-                
-                .btn {
-                    width: 100%;
-                    justify-content: center;
-                }
-            }
-        </style>
-    </head>
-    <body>
-        <div class="grid-bg"></div>
-        
-        <!-- Header -->
-        <div class="admin-header">
-            <div class="header-left">
-                <div class="logo">ADMIN <span>PANEL</span></div>
-                <div style="color: var(--text-tertiary); font-size: 0.9rem;">
-                    Player Management
-                </div>
-            </div>
-            
-            <div class="header-right">
-                <div class="admin-badge">
-                    <i class="fas fa-shield-alt"></i> Administrator
-                </div>
-                
-                <div class="nav-links">
-                    <a href="/admin" class="nav-link">
-                        <i class="fas fa-tachometer-alt"></i> Dashboard
-                    </a>
-                    <a href="/admin/players" class="nav-link active">
-                        <i class="fas fa-users"></i> Players
-                    </a>
-                    <a href="/dashboard" class="nav-link">
-                        <i class="fas fa-user"></i> User View
-                    </a>
-                    <a href="/logout" class="nav-link">
-                        <i class="fas fa-sign-out-alt"></i> Logout
-                    </a>
-                </div>
-            </div>
-        </div>
-        
-        <!-- Main Content -->
-        <div class="admin-container">
-            <div class="page-header">
-                <h1 class="page-title">
-                    <i class="fas fa-users"></i> Player Management
-                </h1>
-                
-                <div class="page-actions">
-                    <a href="/admin/players?action=add" class="btn btn-primary">
-                        <i class="fas fa-user-plus"></i> Add Player
-                    </a>
-                    <button class="btn btn-success" onclick="exportPlayers()">
-                        <i class="fas fa-download"></i> Export
-                    </button>
-                    <button class="btn" onclick="refreshPlayers()">
-                        <i class="fas fa-sync-alt"></i> Refresh
-                    </button>
-                </div>
-            </div>
-            
-            <!-- Players Table -->
-            <div class="players-table-container">
-                <div class="table-header">
-                    <div></div>
-                    <div>Player</div>
-                    <div>Discord</div>
-                    <div>API Key</div>
-                    <div>Kills</div>
-                    <div>Deaths</div>
-                    <div>K/D</div>
-                    <div>Status</div>
-                    <div>Actions</div>
-                </div>
-                
-                {% for player in players %}
-                <div class="table-row">
-                    <div class="player-avatar">
-                        {{ player.in_game_name[0].upper() if player.in_game_name else 'P' }}
-                    </div>
-                    <div class="player-name">
-                        {{ player.in_game_name or 'N/A' }}
-                        {% if player.prestige > 0 %}
-                        <span style="font-size: 0.8rem; color: var(--accent-yellow);">P{{ player.prestige }}</span>
-                        {% endif %}
-                    </div>
-                    <div class="player-discord">
-                        {{ player.discord_name or 'N/A' }}
-                    </div>
-                    <div class="player-key" onclick="copyKey('{{ player.api_key }}')" title="Click to copy">
-                        {{ player.api_key[:8] }}...
-                    </div>
-                    <div class="player-stats">
-                        {{ player.total_kills or 0 }}
-                    </div>
-                    <div class="player-stats">
-                        {{ player.total_deaths or 0 }}
-                    </div>
-                    <div class="player-stats player-kd">
-                        {{ player.kd_ratio }}
-                    </div>
-                    <div class="player-admin">
-                        {% if player.is_admin %}
-                        <span class="badge badge-warning">Admin</span>
-                        {% else %}
-                        <span class="badge badge-success">Player</span>
-                        {% endif %}
-                    </div>
-                    <div class="player-actions">
-                        <button class="action-btn edit" onclick="editPlayer({{ player.id }})" title="Edit">
-                            <i class="fas fa-edit"></i>
-                        </button>
-                        <button class="action-btn delete" onclick="deletePlayer({{ player.id }})" title="Delete">
-                            <i class="fas fa-trash"></i>
-                        </button>
-                        <button class="action-btn" onclick="viewPlayer({{ player.id }})" title="View Details">
-                            <i class="fas fa-eye"></i>
-                        </button>
-                    </div>
-                </div>
-                {% else %}
-                <div style="text-align: center; padding: 60px; color: var(--text-tertiary);">
-                    <i class="fas fa-users" style="font-size: 3rem; margin-bottom: 20px; opacity: 0.5;"></i>
-                    <h3>No players found</h3>
-                    <p>No players have registered yet.</p>
-                </div>
-                {% endfor %}
-            </div>
-            
-            <!-- Pagination -->
-            <div class="pagination">
-                <button class="page-btn active">1</button>
-                <button class="page-btn">2</button>
-                <button class="page-btn">3</button>
-                <span style="color: var(--text-tertiary); margin: 0 10px;">...</span>
-                <button class="page-btn">10</button>
-            </div>
-        </div>
-        
-        <script>
-            function copyKey(key) {
-                navigator.clipboard.writeText(key).then(() => {
-                    showNotification('API key copied to clipboard', 'success');
-                }).catch(err => {
-                    console.error('Copy failed:', err);
-                    showNotification('Failed to copy key', 'error');
-                });
-            }
-            
-            function editPlayer(playerId) {
-                showNotification('Edit player feature coming soon', 'info');
-                // In a real implementation, this would open an edit modal
-                // window.location.href = `/admin/players/${playerId}/edit`;
-            }
-            
-            function deletePlayer(playerId) {
-                if (confirm('Are you sure you want to delete this player? This action cannot be undone.')) {
-                    fetch(`/admin/players/${playerId}`, {
-                        method: 'DELETE',
-                        headers: {
-                            'Content-Type': 'application/json',
-                        }
-                    })
-                    .then(response => response.json())
-                    .then(data => {
-                        if (data.success) {
-                            showNotification('Player deleted successfully', 'success');
-                            setTimeout(() => {
-                                window.location.reload();
-                            }, 1000);
-                        } else {
-                            showNotification(data.error || 'Failed to delete player', 'error');
-                        }
-                    })
-                    .catch(error => {
-                        console.error('Error:', error);
-                        showNotification('Failed to delete player', 'error');
-                    });
-                }
-            }
-            
-            function viewPlayer(playerId) {
-                showNotification('View player feature coming soon', 'info');
-                // window.location.href = `/admin/players/${playerId}`;
-            }
-            
-            function exportPlayers() {
-                showNotification('Export feature coming soon', 'info');
-                // In a real implementation, this would download a CSV/JSON file
-            }
-            
-            function refreshPlayers() {
-                window.location.reload();
-            }
-            
-            function showNotification(message, type = 'info') {
-                const colors = {
-                    info: 'var(--accent-blue)',
-                    success: 'var(--accent-green)',
-                    warning: 'var(--accent-yellow)',
-                    error: 'var(--danger)'
-                };
-                
-                const notification = document.createElement('div');
-                notification.style.cssText = `
-                    position: fixed;
-                    top: 20px;
-                    right: 20px;
-                    background: var(--bg-secondary);
-                    border-left: 4px solid ${colors[type]};
-                    color: var(--text-primary);
-                    padding: 16px;
-                    border-radius: 8px;
-                    box-shadow: 0 8px 24px rgba(0, 0, 0, 0.2);
-                    z-index: 10000;
-                    transform: translateX(400px);
-                    transition: transform 0.3s ease-out;
-                    max-width: 300px;
-                    display: flex;
-                    align-items: center;
-                    gap: 12px;
-                    border: 1px solid var(--border);
-                `;
-                
-                notification.innerHTML = `
-                    <i class="fas fa-${type === 'success' ? 'check-circle' : 'info-circle'}" style="color: ${colors[type]};"></i>
-                    <div>
-                        <div style="font-weight: 600; color: ${colors[type]};">${type.toUpperCase()}</div>
-                        <div style="margin-top: 4px; font-size: 0.95rem;">${message}</div>
-                    </div>
-                `;
-                
-                document.body.appendChild(notification);
-                
-                setTimeout(() => {
-                    notification.style.transform = 'translateX(0)';
-                }, 10);
-                
-                setTimeout(() => {
-                    notification.style.transform = 'translateX(400px)';
-                    setTimeout(() => notification.remove(), 300);
-                }, 3000);
-                
-                notification.addEventListener('click', () => {
-                    notification.style.transform = 'translateX(400px)';
-                    setTimeout(() => notification.remove(), 300);
-                });
-            }
-            
-            // Initialize on load
-            document.addEventListener('DOMContentLoaded', function() {
-                // Add search functionality
-                const searchInput = document.createElement('input');
-                searchInput.type = 'text';
-                searchInput.placeholder = 'Search players...';
-                searchInput.style.cssText = `
-                    padding: 10px 16px;
-                    background: var(--bg-tertiary);
-                    border: 1px solid var(--border);
-                    border-radius: 8px;
-                    color: var(--text-primary);
-                    font-family: 'Inter', sans-serif;
-                    font-size: 0.95rem;
-                    width: 300px;
-                    margin-bottom: 20px;
-                `;
-                
-                const pageHeader = document.querySelector('.page-header');
-                if (pageHeader) {
-                    pageHeader.parentNode.insertBefore(searchInput, pageHeader.nextSibling);
-                }
-            });
-        </script>
-    </body>
-    </html>
-    ''', players=players, action=action)
-
-@app.route('/admin/players/<int:player_id>', methods=['DELETE'])
-def admin_delete_player(player_id):
-    """Delete a player"""
-    if 'user_data' not in session or not session['user_data'].get('is_admin'):
-        return jsonify({"success": False, "error": "Unauthorized"}), 403
-    
-    success = delete_player(player_id)
-    
-    if success:
-        return jsonify({"success": True})
-    else:
-        return jsonify({"success": False, "error": "Failed to delete player"})
 
 # =============================================================================
 # API ENDPOINTS
